@@ -42,6 +42,19 @@ interface TranscriptWithMessages extends TranscriptMetadata {
   messages: Message[]
 }
 
+// --- Helpers ---
+
+function generateUUID(): string {
+  if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
 const API_BASE = "http://localhost:5757/api/transcripts"
 
 export default function HistoryPage() {
@@ -99,7 +112,9 @@ export default function HistoryPage() {
 
   const handleContinue = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation() // Prevent toggling expansion
-    router.push(`/chat?session=${sessionId}`)
+    const newSessionId = generateUUID()
+    toast.info("Starting a new chat session")
+    router.push(`/chat?session=${newSessionId}`)
   }
 
   const formatDate = (dateString: string) => {
