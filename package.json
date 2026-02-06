@@ -1,0 +1,17 @@
+{
+  "name": "oh-my-claude-webui",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter web dev & bun run --filter server dev",
+    "build": "bun run --filter shared build && bun run --filter web build && bun run --filter server build",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.3.0"
+  }
+}
