@@ -12,7 +12,7 @@ mcp.get('/', async (c) => {
     return c.json(mcpServers)
   } catch (error) {
     console.error('Failed to read config:', error)
-    return c.json({ error: 'Failed to read config' }, 500)
+    return c.json({ error: 'Failed to read config', code: 500 }, 500)
   }
 })
 
@@ -23,7 +23,7 @@ mcp.post('/', async (c) => {
     const { name, config } = body
     
     if (!name || !config) {
-      return c.json({ error: 'Missing name or config' }, 400)
+      return c.json({ error: 'Missing name or config', code: 400 }, 400)
     }
     
     const { data } = await configService.read(configService.getConfigPath())
@@ -34,7 +34,7 @@ mcp.post('/', async (c) => {
     }
     
     if (currentConfig.mcpServers[name]) {
-      return c.json({ error: 'MCP server already exists' }, 400)
+      return c.json({ error: 'MCP server already exists', code: 400 }, 400)
     }
     
     currentConfig.mcpServers[name] = config
@@ -43,7 +43,7 @@ mcp.post('/', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to add MCP server:', error)
-    return c.json({ error: 'Failed to add MCP server' }, 500)
+    return c.json({ error: 'Failed to add MCP server', code: 500 }, 500)
   }
 })
 
@@ -57,7 +57,7 @@ mcp.put('/:name', async (c) => {
     const currentConfig = data as any
     
     if (!currentConfig.mcpServers?.[name]) {
-      return c.json({ error: 'MCP server not found' }, 404)
+      return c.json({ error: 'MCP server not found', code: 404 }, 404)
     }
     
     currentConfig.mcpServers[name] = config
@@ -66,7 +66,7 @@ mcp.put('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to update MCP server:', error)
-    return c.json({ error: 'Failed to update MCP server' }, 500)
+    return c.json({ error: 'Failed to update MCP server', code: 500 }, 500)
   }
 })
 
@@ -79,7 +79,7 @@ mcp.delete('/:name', async (c) => {
     const currentConfig = data as any
     
     if (!currentConfig.mcpServers?.[name]) {
-      return c.json({ error: 'MCP server not found' }, 404)
+      return c.json({ error: 'MCP server not found', code: 404 }, 404)
     }
     
     delete currentConfig.mcpServers[name]
@@ -88,7 +88,7 @@ mcp.delete('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to delete MCP server:', error)
-    return c.json({ error: 'Failed to delete MCP server' }, 500)
+    return c.json({ error: 'Failed to delete MCP server', code: 500 }, 500)
   }
 })
 

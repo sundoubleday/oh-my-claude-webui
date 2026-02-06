@@ -1,10 +1,11 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Loader2 } from "lucide-react"
 
 // Types
 interface McpConfig {
@@ -15,35 +16,10 @@ interface McpConfig {
 }
 
 interface McpServer {
-  id: string // Adding ID for easier management
+  id?: string // Optional for new servers
   name: string
   config: McpConfig
 }
-
-// Initial Mock Data
-const INITIAL_SERVERS: McpServer[] = [
-  {
-    id: "1",
-    name: "filesystem",
-    config: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
-      enabled: true,
-    },
-  },
-  {
-    id: "2",
-    name: "github-search",
-    config: {
-      command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-github"],
-      enabled: false,
-      env: {
-        GITHUB_TOKEN: "sk-...",
-      },
-    },
-  },
-]
 
 // Icons
 const Icons = {
@@ -67,17 +43,44 @@ const Icons = {
   ),
 }
 
+const API_BASE = "http://localhost:5757/api/mcp"
+
 export default function McpPage() {
-  const [servers, setServers] = useState<McpServer[]>(INITIAL_SERVERS)
+  const [servers, setServers] = useState<McpServer[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [editingServer, setEditingServer] = useState<McpServer | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   
   // Form State
   const [formData, setFormData] = useState({
     name: "",
     configJson: "",
   })
+
+  useEffect(() => {
+    fetchServers()
+  }, [])
+
+  const fetchServers = async () => {
+    setIsLoading(true)
+    try {
+      const res = await fetch(API_BASE)
+      if (!res.ok) throw new Error("Failed to fetch MCP servers")
+      const data = await res.json()
+      // Convert object map to array
+      const serverArray = Object.entries(data).map(([name, config]) => ({
+        name,
+        config: config as McpConfig
+      }))
+      setServers(serverArray)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load servers")
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const openAddModal = () => {
     setEditingServer(null)
@@ -106,7 +109,7 @@ export default function McpPage() {
     setIsDeleteModalOpen(true)
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     try {
       if (!formData.name.trim()) {
         toast.error("Server name is required")
@@ -118,36 +121,63 @@ export default function McpPage() {
       // Basic validation
       if (!config.command) throw new Error("Config must have a command")
 
+      setIsSubmitting(true)
+
       if (editingServer) {
         // Edit
-        setServers(prev => prev.map(s => 
-          s.id === editingServer.id 
-            ? { ...s, name: formData.name, config } 
-            : s
-        ))
+        const res = await fetch(`${API_BASE}/${editingServer.name}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config)
+        })
+        if (!res.ok) {
+          const errorData = await res.json()
+          throw new Error(errorData.error || "Failed to update server")
+        }
         toast.success("Server updated successfully")
       } else {
         // Add
-        const newServer: McpServer = {
-          id: Date.now().toString(),
-          name: formData.name,
-          config: config
+        const res = await fetch(API_BASE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: formData.name, config })
+        })
+        if (!res.ok) {
+          const errorData = await res.json()
+          throw new Error(errorData.error || "Failed to add server")
         }
-        setServers(prev => [...prev, newServer])
         toast.success("Server added successfully")
       }
+      
       setIsModalOpen(false)
+      fetchServers() // Refresh list
     } catch (e) {
-      toast.error("Invalid JSON configuration")
+      toast.error(e instanceof Error ? e.message : "Invalid configuration")
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (editingServer) {
-      setServers(prev => prev.filter(s => s.id !== editingServer.id))
-      toast.success("Server deleted")
-      setIsDeleteModalOpen(false)
-      setEditingServer(null)
+      try {
+        setIsSubmitting(true)
+        const res = await fetch(`${API_BASE}/${editingServer.name}`, {
+          method: "DELETE"
+        })
+        if (!res.ok) {
+          const errorData = await res.json()
+          throw new Error(errorData.error || "Failed to delete server")
+        }
+        toast.success("Server deleted")
+        setIsDeleteModalOpen(false)
+        setEditingServer(null)
+        fetchServers() // Refresh list
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to delete server")
+      } finally {
+        setIsSubmitting(false)
+      }
     }
   }
 
@@ -165,40 +195,63 @@ export default function McpPage() {
       </div>
 
       {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {servers.map((server) => (
-          <Card key={server.id} className="group overflow-hidden border-border/50 hover:border-border transition-all duration-300 hover:shadow-md bg-card/50 backdrop-blur-sm">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="space-y-1">
-                <CardTitle className="text-base font-medium flex items-center gap-2">
-                  {server.name}
-                </CardTitle>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className={`flex h-2 w-2 rounded-full ${server.config.enabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-400'}`} />
-                  {server.config.enabled ? 'Active' : 'Disabled'}
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-24 space-y-4">
+          <Loader2 className="h-12 w-12 text-primary animate-spin" />
+          <p className="text-muted-foreground animate-pulse">Loading MCP configurations...</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {servers.map((server, index) => (
+            <Card key={`${server.name}-${index}`} className="group overflow-hidden border-border/50 hover:border-border transition-all duration-300 hover:shadow-md bg-card/50 backdrop-blur-sm">
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-medium flex items-center gap-2">
+                    {server.name}
+                  </CardTitle>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className={`flex h-2 w-2 rounded-full ${server.config.enabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-400'}`} />
+                    {server.config.enabled ? 'Active' : 'Disabled'}
+                  </div>
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground break-all border border-border/50">
-                <div className="flex items-center gap-2 mb-1 opacity-70">
-                  <Icons.Terminal />
-                  <span className="font-semibold uppercase tracking-wider text-[10px]">Command</span>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground break-all border border-border/50">
+                  <div className="flex items-center gap-2 mb-1 opacity-70">
+                    <Icons.Terminal />
+                    <span className="font-semibold uppercase tracking-wider text-[10px]">Command</span>
+                  </div>
+                  {server.config.command} {server.config.args.join(" ")}
                 </div>
-                {server.config.command} {server.config.args.join(" ")}
+              </CardContent>
+              <CardFooter className="flex justify-end gap-2 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEditModal(server)}>
+                  <Icons.Edit />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => openDeleteModal(server)}>
+                  <Icons.Trash />
+                </Button>
+              </CardFooter>
+            </Card>
+          ))}
+
+          {/* Empty State */}
+          {servers.length === 0 && (
+            <div className="col-span-full py-16 text-center border-2 border-dashed rounded-xl bg-muted/10">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+                <Icons.Terminal />
               </div>
-            </CardContent>
-            <CardFooter className="flex justify-end gap-2 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEditModal(server)}>
-                <Icons.Edit />
+              <h3 className="text-lg font-semibold">No MCP servers configured</h3>
+              <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
+                Add your first MCP server to start extending Claude's capabilities with local tools and resources.
+              </p>
+              <Button onClick={openAddModal} variant="outline" className="mt-6">
+                <Icons.Plus className="mr-2 h-4 w-4" /> Add Server
               </Button>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => openDeleteModal(server)}>
-                <Icons.Trash />
-              </Button>
-            </CardFooter>
-          </Card>
-        ))}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Edit/Add Modal Overlay */}
       {isModalOpen && (

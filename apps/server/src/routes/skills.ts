@@ -74,7 +74,7 @@ skills.get('/', async (c) => {
     return c.json(skillsList)
   } catch (error) {
     console.error('Failed to list skills:', error)
-    return c.json({ error: 'Failed to list skills' }, 500)
+    return c.json({ error: 'Failed to list skills', code: 500 }, 500)
   }
 })
 
@@ -85,14 +85,14 @@ skills.post('/', async (c) => {
     const { sourcePath } = body
 
     if (!sourcePath) {
-      return c.json({ error: 'Missing sourcePath' }, 400)
+      return c.json({ error: 'Missing sourcePath', code: 400 }, 400)
     }
 
     // Verify source path exists
     try {
       await stat(sourcePath)
     } catch {
-      return c.json({ error: `Source path does not exist: ${sourcePath}` }, 400)
+      return c.json({ error: `Source path does not exist: ${sourcePath}`, code: 400 }, 400)
     }
 
     const skillName = basename(sourcePath)
@@ -104,7 +104,7 @@ skills.post('/', async (c) => {
     return c.json({ success: true, name: skillName })
   } catch (error) {
     console.error('Failed to add skill:', error)
-    return c.json({ error: 'Failed to add skill' }, 500)
+    return c.json({ error: 'Failed to add skill', code: 500 }, 500)
   }
 })
 
@@ -118,7 +118,7 @@ skills.delete('/:name', async (c) => {
     try {
       await stat(skillPath)
     } catch {
-      return c.json({ error: 'Skill not found' }, 404)
+      return c.json({ error: 'Skill not found', code: 404 }, 404)
     }
 
     // Remove the skill directory recursively
@@ -127,7 +127,7 @@ skills.delete('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to delete skill:', error)
-    return c.json({ error: 'Failed to delete skill' }, 500)
+    return c.json({ error: 'Failed to delete skill', code: 500 }, 500)
   }
 })
 

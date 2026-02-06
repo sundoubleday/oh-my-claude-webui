@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Trash2, Folder, X, AlertTriangle } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Plus, Trash2, Folder, X, AlertTriangle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -9,36 +9,41 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 
 interface Skill {
-  id: string
   name: string
   description: string
   path: string
 }
 
-const MOCK_SKILLS: Skill[] = [
-  {
-    id: "1",
-    name: "notebooklm",
-    description: "Automate Google NotebookLM",
-    path: "~/.claude/skills/notebooklm"
-  },
-  {
-    id: "2",
-    name: "browser-automation",
-    description: "Headless browser control via Playwright",
-    path: "~/.claude/skills/browser"
-  }
-]
+const API_BASE = "http://localhost:5757/api/skills"
 
 export default function SkillsPage() {
-  const [skills, setSkills] = useState<Skill[]>(MOCK_SKILLS)
+  const [skills, setSkills] = useState<Skill[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<Skill | null>(null)
   const [newSkillPath, setNewSkillPath] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleAddSkill = () => {
+  useEffect(() => {
+    fetchSkills()
+  }, [])
+
+  const fetchSkills = async () => {
+    setIsLoading(true)
+    try {
+      const res = await fetch(API_BASE)
+      if (!res.ok) throw new Error("Failed to fetch skills")
+      const data = await res.json()
+      setSkills(data)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load skills")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleAddSkill = async () => {
     if (!newSkillPath.trim()) {
       toast.error("Please enter a valid path")
       return
@@ -46,22 +51,27 @@ export default function SkillsPage() {
 
     setIsSubmitting(true)
 
-    // Simulate API delay
-    setTimeout(() => {
-      const name = newSkillPath.split("/").pop() || "unknown-skill"
-      const newSkill: Skill = {
-        id: Math.random().toString(36).substr(2, 9),
-        name: name,
-        description: "Imported from local file system",
-        path: newSkillPath
+    try {
+      const res = await fetch(API_BASE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourcePath: newSkillPath })
+      })
+
+      if (!res.ok) {
+        const errorData = await res.json()
+        throw new Error(errorData.error || "Failed to add skill")
       }
 
-      setSkills([...skills, newSkill])
       setNewSkillPath("")
       setShowAddModal(false)
-      setIsSubmitting(false)
       toast.success("Skill added successfully")
-    }, 500)
+      fetchSkills() // Refresh list
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to add skill")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleDeleteClick = (skill: Skill) => {
@@ -69,12 +79,28 @@ export default function SkillsPage() {
     setShowDeleteModal(true)
   }
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (skillToDelete) {
-      setSkills(skills.filter(s => s.id !== skillToDelete.id))
-      setShowDeleteModal(false)
-      setSkillToDelete(null)
-      toast.success("Skill deleted")
+      setIsSubmitting(true)
+      try {
+        const res = await fetch(`${API_BASE}/${skillToDelete.name}`, {
+          method: "DELETE"
+        })
+
+        if (!res.ok) {
+          const errorData = await res.json()
+          throw new Error(errorData.error || "Failed to delete skill")
+        }
+
+        setShowDeleteModal(false)
+        setSkillToDelete(null)
+        toast.success("Skill deleted")
+        fetchSkills() // Refresh list
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to delete skill")
+      } finally {
+        setIsSubmitting(false)
+      }
     }
   }
 
@@ -95,52 +121,59 @@ export default function SkillsPage() {
       </div>
 
       {/* Skills Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {skills.map((skill) => (
-          <Card key={skill.id} className="group relative overflow-hidden transition-all hover:shadow-md border-border/50">
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                    {skill.name}
-                  </CardTitle>
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-24 space-y-4">
+          <Loader2 className="h-12 w-12 text-primary animate-spin" />
+          <p className="text-muted-foreground">Loading skills...</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {skills.map((skill, index) => (
+            <Card key={`${skill.name}-${index}`} className="group relative overflow-hidden transition-all hover:shadow-md border-border/50">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                      {skill.name}
+                    </CardTitle>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => handleDeleteClick(skill)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    <span className="sr-only">Delete skill</span>
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => handleDeleteClick(skill)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span className="sr-only">Delete skill</span>
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <CardDescription className="line-clamp-2 min-h-[40px]">
-                {skill.description}
-              </CardDescription>
-              <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground bg-secondary/50 p-2 rounded-md font-mono truncate">
-                <Folder className="h-3 w-3 shrink-0" />
-                <span className="truncate" title={skill.path}>{skill.path}</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="line-clamp-2 min-h-[40px]">
+                  {skill.description}
+                </CardDescription>
+                <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground bg-secondary/50 p-2 rounded-md font-mono truncate">
+                  <Folder className="h-3 w-3 shrink-0" />
+                  <span className="truncate" title={skill.path}>{skill.path}</span>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
 
-        {/* Empty State */}
-        {skills.length === 0 && (
-          <div className="col-span-full py-12 text-center border-2 border-dashed rounded-lg bg-secondary/10">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary mb-4">
-              <Folder className="h-6 w-6 text-muted-foreground" />
+          {/* Empty State */}
+          {skills.length === 0 && (
+            <div className="col-span-full py-12 text-center border-2 border-dashed rounded-lg bg-secondary/10">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary mb-4">
+                <Folder className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold">No skills found</h3>
+              <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
+                Add a skill by pointing to a directory containing a valid skill configuration.
+              </p>
             </div>
-            <h3 className="text-lg font-semibold">No skills found</h3>
-            <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
-              Add a skill by pointing to a directory containing a valid skill configuration.
-            </p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Custom Add Modal (Simulating Dialog) */}
       {showAddModal && (

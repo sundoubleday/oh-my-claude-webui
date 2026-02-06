@@ -35,7 +35,7 @@ commands.get('/', async (c) => {
     return c.json(commandsList)
   } catch (error) {
     console.error('Failed to read commands directory:', error)
-    return c.json({ error: 'Failed to read commands directory' }, 500)
+    return c.json({ error: 'Failed to read commands directory', code: 500 }, 500)
   }
 })
 
@@ -46,7 +46,7 @@ commands.get('/:name', async (c) => {
     
     // Validate filename
     if (!isSafeFilename(name)) {
-      return c.json({ error: 'Invalid command name' }, 400)
+      return c.json({ error: 'Invalid command name', code: 400 }, 400)
     }
     
     const commandPath = getCommandPath(name)
@@ -55,7 +55,7 @@ commands.get('/:name', async (c) => {
     try {
       await access(commandPath)
     } catch {
-      return c.json({ error: 'Command not found' }, 404)
+      return c.json({ error: 'Command not found', code: 404 }, 404)
     }
     
     // Read file content
@@ -64,7 +64,7 @@ commands.get('/:name', async (c) => {
     return c.json({ name, content })
   } catch (error) {
     console.error('Failed to read command:', error)
-    return c.json({ error: 'Failed to read command' }, 500)
+    return c.json({ error: 'Failed to read command', code: 500 }, 500)
   }
 })
 
@@ -76,16 +76,16 @@ commands.post('/', async (c) => {
     
     // Validate input
     if (!name || typeof name !== 'string') {
-      return c.json({ error: 'Missing or invalid name' }, 400)
+      return c.json({ error: 'Missing or invalid name', code: 400 }, 400)
     }
     
     if (!content || typeof content !== 'string') {
-      return c.json({ error: 'Missing or invalid content' }, 400)
+      return c.json({ error: 'Missing or invalid content', code: 400 }, 400)
     }
     
     // Validate filename
     if (!isSafeFilename(name)) {
-      return c.json({ error: 'Invalid command name: only alphanumeric, hyphens, and underscores allowed' }, 400)
+      return c.json({ error: 'Invalid command name: only alphanumeric, hyphens, and underscores allowed', code: 400 }, 400)
     }
     
     const commandPath = getCommandPath(name)
@@ -93,7 +93,7 @@ commands.post('/', async (c) => {
     // Check if file already exists
     try {
       await access(commandPath)
-      return c.json({ error: 'Command already exists' }, 409)
+      return c.json({ error: 'Command already exists', code: 409 }, 409)
     } catch {
       // File doesn't exist, which is what we want
     }
@@ -104,7 +104,7 @@ commands.post('/', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to create command:', error)
-    return c.json({ error: 'Failed to create command' }, 500)
+    return c.json({ error: 'Failed to create command', code: 500 }, 500)
   }
 })
 
@@ -117,12 +117,12 @@ commands.put('/:name', async (c) => {
     
     // Validate filename
     if (!isSafeFilename(name)) {
-      return c.json({ error: 'Invalid command name' }, 400)
+      return c.json({ error: 'Invalid command name', code: 400 }, 400)
     }
     
     // Validate content
     if (!content || typeof content !== 'string') {
-      return c.json({ error: 'Missing or invalid content' }, 400)
+      return c.json({ error: 'Missing or invalid content', code: 400 }, 400)
     }
     
     const commandPath = getCommandPath(name)
@@ -131,7 +131,7 @@ commands.put('/:name', async (c) => {
     try {
       await access(commandPath)
     } catch {
-      return c.json({ error: 'Command not found' }, 404)
+      return c.json({ error: 'Command not found', code: 404 }, 404)
     }
     
     // Update file
@@ -140,7 +140,7 @@ commands.put('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to update command:', error)
-    return c.json({ error: 'Failed to update command' }, 500)
+    return c.json({ error: 'Failed to update command', code: 500 }, 500)
   }
 })
 
@@ -151,7 +151,7 @@ commands.delete('/:name', async (c) => {
     
     // Validate filename
     if (!isSafeFilename(name)) {
-      return c.json({ error: 'Invalid command name' }, 400)
+      return c.json({ error: 'Invalid command name', code: 400 }, 400)
     }
     
     const commandPath = getCommandPath(name)
@@ -160,7 +160,7 @@ commands.delete('/:name', async (c) => {
     try {
       await access(commandPath)
     } catch {
-      return c.json({ error: 'Command not found' }, 404)
+      return c.json({ error: 'Command not found', code: 404 }, 404)
     }
     
     // Delete file
@@ -169,7 +169,7 @@ commands.delete('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to delete command:', error)
-    return c.json({ error: 'Failed to delete command' }, 500)
+    return c.json({ error: 'Failed to delete command', code: 500 }, 500)
   }
 })
 

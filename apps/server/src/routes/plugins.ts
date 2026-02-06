@@ -76,7 +76,7 @@ plugins.get('/', async (c) => {
     return c.json(pluginsList)
   } catch (error) {
     console.error('Failed to read plugins:', error)
-    return c.json({ error: 'Failed to read plugins' }, 500)
+    return c.json({ error: 'Failed to read plugins', code: 500 }, 500)
   }
 })
 
@@ -89,7 +89,7 @@ plugins.delete('/:name', async (c) => {
     
     // Check if plugin exists
     if (!data.plugins[name]) {
-      return c.json({ error: 'Plugin not found' }, 404)
+      return c.json({ error: 'Plugin not found', code: 404 }, 404)
     }
     
     // Get install path before deleting
@@ -115,7 +115,7 @@ plugins.delete('/:name', async (c) => {
     return c.json({ success: true, name })
   } catch (error) {
     console.error('Failed to delete plugin:', error)
-    return c.json({ error: 'Failed to delete plugin' }, 500)
+    return c.json({ error: 'Failed to delete plugin', code: 500 }, 500)
   }
 })
 

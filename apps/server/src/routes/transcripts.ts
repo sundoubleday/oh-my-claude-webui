@@ -103,7 +103,7 @@ transcripts.get('/', async (c) => {
     return c.json(validMetadata)
   } catch (error) {
     console.error('Failed to list transcripts:', error)
-    return c.json({ error: 'Failed to list transcripts' }, 500)
+    return c.json({ error: 'Failed to list transcripts', code: 500 }, 500)
   }
 })
 
@@ -119,7 +119,7 @@ transcripts.get('/:sessionId', async (c) => {
       content = await readFile(filePath, 'utf-8')
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        return c.json({ error: 'Transcript not found' }, 404)
+        return c.json({ error: 'Transcript not found', code: 404 }, 404)
       }
       throw error
     }
@@ -134,7 +134,7 @@ transcripts.get('/:sessionId', async (c) => {
     return c.json(result)
   } catch (error) {
     console.error('Failed to read transcript:', error)
-    return c.json({ error: 'Failed to read transcript' }, 500)
+    return c.json({ error: 'Failed to read transcript', code: 500 }, 500)
   }
 })
 

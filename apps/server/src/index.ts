@@ -15,6 +15,16 @@ const { upgradeWebSocket, websocket } = createBunWebSocket()
 const cliInstances = new Map<WSContext, CLIService>()
 const app = new Hono()
 
+// Unified error handling middleware
+app.onError((err, c) => {
+  console.error('Server error:', err)
+  const status = (err as any).status || 500
+  return c.json({ 
+    error: err.message || 'Internal server error',
+    code: status
+  }, status)
+})
+
 // CORS 配置
 app.use('/*', cors({
   origin: 'http://localhost:3000',
