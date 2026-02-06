@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "build": "bun build ./src/index.ts --outdir ./dist"
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build ./src/index.ts --outdir ./dist",
+    "test": "vitest"
   },
   "dependencies": {
     "hono": "^4.0.0",
     "shared": "workspace:*"
   },
   "devDependencies": {
+    "vitest": "^1.0.0",
     "@types/bun": "latest"
   }
 }
