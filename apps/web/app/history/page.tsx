@@ -8,7 +8,6 @@ import {
   ArrowRight, 
   ChevronDown, 
   ChevronUp, 
-  Terminal,
   User,
   Bot,
   Loader2
@@ -32,12 +31,14 @@ interface Message {
   timestamp: string
 }
 
-interface Transcript {
+interface TranscriptMetadata {
   sessionId: string
-  title: string
-  createdAt: string
-  updatedAt: string
   messageCount: number
+  firstMessageTime: string
+  lastMessageTime: string
+}
+
+interface TranscriptWithMessages extends TranscriptMetadata {
   messages: Message[]
 }
 
@@ -45,7 +46,8 @@ const API_BASE = "http://localhost:5757/api/transcripts"
 
 export default function HistoryPage() {
   const router = useRouter()
-  const [transcripts, setTranscripts] = useState<Transcript[]>([])
+  const [transcripts, setTranscripts] = useState<TranscriptMetadata[]>([])
+  const [expandedTranscript, setExpandedTranscript] = useState<TranscriptWithMessages | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
@@ -67,8 +69,32 @@ export default function HistoryPage() {
     }
   }
 
-  const toggleExpand = (id: string) => {
-    setExpandedId(expandedId === id ? null : id)
+  const loadTranscriptMessages = async (sessionId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/${sessionId}`)
+      if (!res.ok) throw new Error("Failed to load transcript")
+      const data = await res.json()
+      
+      const metadata = transcripts.find(t => t.sessionId === sessionId)
+      if (!metadata) return
+
+      setExpandedTranscript({ 
+        ...metadata,
+        messages: data.messages 
+      })
+    } catch (error) {
+      toast.error("Failed to load transcript details")
+    }
+  }
+
+  const toggleExpand = async (id: string) => {
+    if (expandedId === id) {
+      setExpandedId(null)
+      setExpandedTranscript(null)
+    } else {
+      setExpandedId(id)
+      await loadTranscriptMessages(id)
+    }
   }
 
   const handleContinue = (e: React.MouseEvent, sessionId: string) => {
@@ -125,7 +151,7 @@ export default function HistoryPage() {
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
                       <CardTitle className="text-xl flex items-center gap-2">
-                        {transcript.title}
+                        Session {formatDate(transcript.firstMessageTime)}
                         <span className="text-xs font-normal font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
                           {transcript.sessionId.slice(0, 8)}
                         </span>
@@ -133,7 +159,7 @@ export default function HistoryPage() {
                       <CardDescription className="flex items-center gap-4 text-sm">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {formatDate(transcript.updatedAt)}
+                          Last active: {formatDate(transcript.lastMessageTime)}
                         </span>
                         <span className="flex items-center gap-1">
                           <MessageSquare className="h-3 w-3" />
@@ -157,23 +183,15 @@ export default function HistoryPage() {
                   </div>
                 </CardHeader>
 
-                {/* Collapsed Preview */}
-                {!isExpanded && transcript.messages.length > 0 && (
-                  <CardContent className="pb-4 text-sm text-muted-foreground truncate cursor-pointer" onClick={() => toggleExpand(transcript.sessionId)}>
-                    <div className="flex items-center gap-2">
-                      <Terminal className="h-4 w-4 shrink-0 opacity-50" />
-                      <span className="italic">
-                        "{transcript.messages[transcript.messages.length - 1].content.slice(0, 100)}..."
-                      </span>
-                    </div>
-                  </CardContent>
-                )}
-
                 {/* Expanded Detail View */}
                 {isExpanded && (
                   <CardContent className="border-t bg-muted/10 p-0">
                     <div className="max-h-[500px] overflow-y-auto p-4 space-y-4">
-                      {transcript.messages.map((msg, idx) => (
+                      {!expandedTranscript ? (
+                        <div className="flex items-center justify-center py-12">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : expandedTranscript.messages.map((msg, idx) => (
                         <div 
                           key={idx} 
                           className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}

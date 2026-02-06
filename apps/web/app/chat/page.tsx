@@ -17,6 +17,19 @@ interface Message {
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error"
 
+function generateUUID(): string {
+  // Try modern API first
+  if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID()
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
 export default function ChatPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -27,22 +40,26 @@ export default function ChatPage() {
   const [ws, setWs] = useState<WebSocket | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>("connecting")
   const [sessionId, setSessionId] = useState<string>("")
+  const [sessionReady, setSessionReady] = useState(false)
   
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
 
   // Initialize Session
   useEffect(() => {
     const urlSession = searchParams.get("session")
     if (urlSession) {
       setSessionId(urlSession)
-    } else {
-      const newId = crypto.randomUUID()
+      setSessionReady(true)
+    } else if (typeof window !== "undefined" && !sessionReady) {
+      const newId = generateUUID()
       setSessionId(newId)
+      setSessionReady(true)
       router.replace(`/chat?session=${newId}`)
     }
-  }, [searchParams, router])
+  }, [searchParams, router, sessionReady])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -53,16 +70,28 @@ export default function ChatPage() {
 
   // WebSocket Connection
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || !sessionReady) return
 
+    // Prevent duplicate connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return
+    }
+
+    console.log('Establishing WebSocket connection for session:', sessionId)
     const websocket = new WebSocket("ws://localhost:5757/ws/chat")
+    wsRef.current = websocket
+
+    let isMounted = true
 
     websocket.onopen = () => {
+      if (!isMounted) return
       setStatus("connected")
       toast.success("Connected to server")
     }
 
     websocket.onmessage = (event) => {
+      if (!isMounted) return
       try {
         const data = JSON.parse(event.data)
         
@@ -91,11 +120,13 @@ export default function ChatPage() {
     }
 
     websocket.onclose = () => {
+      if (!isMounted) return
       setStatus("disconnected")
       console.log("Disconnected from chat server")
     }
 
     websocket.onerror = (error) => {
+      if (!isMounted) return
       setStatus("error")
       console.error("WebSocket error:", error)
       toast.error("Connection error")
@@ -104,9 +135,21 @@ export default function ChatPage() {
     setWs(websocket)
 
     return () => {
-      websocket.close()
+      console.log('Cleaning up WebSocket connection')
+      isMounted = false
+      
+      // Only close if the connection is actually open
+      if (websocket.readyState === WebSocket.OPEN || 
+          websocket.readyState === WebSocket.CONNECTING) {
+        websocket.close()
+      }
+      
+      // Clean up ref
+      if (wsRef.current === websocket) {
+        wsRef.current = null
+      }
     }
-  }, [sessionId])
+  }, [sessionId, sessionReady])
 
   const sendMessage = (e?: React.FormEvent) => {
     e?.preventDefault()

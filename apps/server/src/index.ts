@@ -11,8 +11,8 @@ import { CLIService } from './services/cli'
 
 const { upgradeWebSocket, websocket } = createBunWebSocket()
 
-// Map to track CLIService instances per WebSocket connection
-const cliInstances = new Map<WSContext, CLIService>()
+// Map to track CLIService instances per sessionId
+const cliInstances = new Map<string, CLIService>()
 const app = new Hono()
 
 // Unified error handling middleware
@@ -54,44 +54,49 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
   onOpen: (event, ws) => {
     console.log('WebSocket connected')
     
-    // Create a new CLIService instance for this connection
-    const cli = new CLIService()
-    cliInstances.set(ws, cli)
-    
-    // Forward CLI message events to WebSocket
-    cli.on('message', (msg) => {
-      ws.send(JSON.stringify({ type: 'message', content: msg }))
-    })
-    
-    // Forward CLI error events to WebSocket
-    cli.on('error', (error) => {
-      ws.send(JSON.stringify({ type: 'error', error }))
-    })
-    
-    // Handle CLI exit
-    cli.on('exit', (code) => {
-      ws.send(JSON.stringify({ type: 'status', status: 'stopped' }))
-    })
-    
-    // Send ready status
+    // Note: We'll store the CLI when we get the first message with sessionId
+    // For now, just send ready status
     ws.send(JSON.stringify({ type: 'status', status: 'ready' }))
   },
   
   onMessage: async (event, ws) => {
-    const cli = cliInstances.get(ws)
-    if (!cli) {
-      ws.send(JSON.stringify({ type: 'error', error: 'No CLI instance found' }))
-      return
-    }
-    
     try {
       const data = JSON.parse(event.data.toString())
       
       if (data.type === 'message') {
+        const sessionId = data.sessionId
+        if (!sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'No sessionId provided' }))
+          return
+        }
+        
+        // Get or create CLI instance for this session
+        let cli = cliInstances.get(sessionId)
+        if (!cli) {
+          console.log('Creating new CLI instance for session:', sessionId)
+          cli = new CLIService()
+          cliInstances.set(sessionId, cli)
+          
+          // Forward CLI message events to WebSocket
+          cli.on('message', (msg) => {
+            ws.send(JSON.stringify({ type: 'message', content: msg }))
+          })
+          
+          // Forward CLI error events to WebSocket
+          cli.on('error', (error) => {
+            ws.send(JSON.stringify({ type: 'error', error }))
+          })
+          
+          // Handle CLI exit
+          cli.on('exit', (code) => {
+            ws.send(JSON.stringify({ type: 'status', status: 'stopped' }))
+          })
+        }
+        
         // Start CLI if not running
         if (!cli.isRunning()) {
           try {
-            await cli.start(data.sessionId)
+            await cli.start(sessionId)
             ws.send(JSON.stringify({ type: 'status', status: 'processing' }))
           } catch (startError) {
             ws.send(JSON.stringify({ 
@@ -118,25 +123,14 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
   onClose: async (event, ws) => {
     console.log('WebSocket closed')
     
-    const cli = cliInstances.get(ws)
-    if (cli) {
-      try {
-        await cli.stop()
-      } catch (error) {
-        console.error('Error stopping CLI:', error)
-      }
-      cliInstances.delete(ws)
-    }
+    // Note: We don't delete CLI instances on close
+    // They remain active for the session and can be reused
+    // if the user reconnects with the same sessionId
   },
   
   onError: (event, ws) => {
     console.error('WebSocket error:', event)
-    
-    const cli = cliInstances.get(ws)
-    if (cli) {
-      cli.stop().catch(console.error)
-      cliInstances.delete(ws)
-    }
+    // CLI instances persist even on WebSocket errors
   }
 })))
 
