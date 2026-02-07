@@ -15,17 +15,8 @@ import {
   Terminal,
 } from "lucide-react"
 
-// Generate UUID for new chat sessions
-function generateUUID(): string {
-  if (typeof window !== 'undefined' && window.crypto?.randomUUID) {
-    return window.crypto.randomUUID()
-  }
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0
-    const v = c === 'x' ? r : (r & 0x3 | 0x8)
-    return v.toString(16)
-  })
-}
+// Stable "new chat" URL - actual UUID is generated in chat page
+const NEW_CHAT_URL = '/chat?session=new'
 
 const staticNavLinks = [
   { href: '/history', label: 'History', icon: History },
@@ -44,11 +35,7 @@ function SidebarContent() {
   const isInChat = pathname === '/chat'
   const currentSessionId = isInChat ? searchParams.get('session') : null
   
-  // Generate new session URL for "New Chat" button
-  const getNewChatUrl = () => {
-    const newId = generateUUID()
-    return `/chat?session=${newId}`
-  }
+
 
   return (
     <>
@@ -59,10 +46,10 @@ function SidebarContent() {
       </div>
       <nav className="flex-1 overflow-y-auto py-4">
         <ul className="grid gap-1 px-2">
-          {/* New Chat Button - Always creates new session */}
+          {/* New Chat Button - Uses stable URL, UUID generated in chat page */}
           <li>
             <Link
-              href={getNewChatUrl()}
+              href={NEW_CHAT_URL}
               className={cn(
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 "text-muted-foreground"

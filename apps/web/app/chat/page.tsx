@@ -119,6 +119,20 @@ function ChatContent() {
   // Initialize Session
   useEffect(() => {
     const urlSession = searchParams.get("session")
+    
+    // Handle "new" as special case - generate real UUID client-side only
+    if (urlSession === "new") {
+      if (typeof window !== "undefined") {
+        const newId = generateUUID()
+        prevSessionIdRef.current = newId
+        setSessionId(newId)
+        setSessionReady(true)
+        // Use window.history to avoid re-render
+        window.history.replaceState(null, "", `/chat?session=${newId}`)
+      }
+      return
+    }
+    
     if (urlSession) {
       // Clear messages when switching to a different session
       if (prevSessionIdRef.current && prevSessionIdRef.current !== urlSession) {
@@ -135,9 +149,9 @@ function ChatContent() {
       prevSessionIdRef.current = newId
       setSessionId(newId)
       setSessionReady(true)
-      router.replace(`/chat?session=${newId}`)
+      window.history.replaceState(null, "", `/chat?session=${newId}`)
     }
-  }, [searchParams, router, sessionReady])
+  }, [searchParams, sessionReady])
 
   // Load historical messages when resuming a session
   useEffect(() => {

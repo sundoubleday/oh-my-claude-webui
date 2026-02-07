@@ -34,7 +34,6 @@ interface TranscriptMetadata {
   messageCount: number
   firstMessageTime: string
   lastMessageTime: string
-  isAgentSession: boolean  // true if session contains tool_use (opencode/agent sessions)
 }
 
 interface TranscriptContent {
@@ -163,16 +162,12 @@ async function extractMetadata(filePath: string, sessionId: string): Promise<Tra
     const rawLines = parseJSONL(content)
     const displayMessages = toDisplayMessages(rawLines)
     
-    // Check if this is an agent/opencode session (contains tool_use)
-    const isAgentSession = rawLines.some(line => line.type === 'tool_use' || line.type === 'tool_result')
-    
     if (displayMessages.length === 0) {
       return {
         sessionId,
         messageCount: 0,
         firstMessageTime: '',
         lastMessageTime: '',
-        isAgentSession,
       }
     }
     
@@ -181,7 +176,6 @@ async function extractMetadata(filePath: string, sessionId: string): Promise<Tra
       messageCount: displayMessages.length,
       firstMessageTime: displayMessages[0].timestamp,
       lastMessageTime: displayMessages[displayMessages.length - 1].timestamp,
-      isAgentSession,
     }
   } catch (error) {
     console.error(`Failed to extract metadata for ${sessionId}:`, error)
@@ -193,8 +187,6 @@ async function extractMetadata(filePath: string, sessionId: string): Promise<Tra
 transcripts.get('/', async (c) => {
   try {
     const transcriptsDir = getTranscriptsDir()
-    // Query param to include agent sessions (default: false, only show chat sessions)
-    const includeAgentSessions = c.req.query('includeAgent') === 'true'
     
     let files: string[]
     
@@ -216,14 +208,9 @@ transcripts.get('/', async (c) => {
     })
     
     const allMetadata = await Promise.all(metadataPromises)
-    // Filter out failed extractions, empty sessions, and optionally agent sessions
+    // Filter out failed extractions and empty sessions
     const validMetadata = allMetadata
-      .filter((m): m is TranscriptMetadata => {
-        if (m === null || m.messageCount === 0) return false
-        // By default, exclude agent sessions (opencode, etc.)
-        if (!includeAgentSessions && m.isAgentSession) return false
-        return true
-      })
+      .filter((m): m is TranscriptMetadata => m !== null && m.messageCount > 0)
       .sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime())
     
     return c.json(validMetadata)
