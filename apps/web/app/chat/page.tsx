@@ -96,9 +96,10 @@ export default function ChatPage() {
         const data = JSON.parse(event.data)
         
         if (data.type === "message") {
+          // CLI returns { type: "result", result: "...", ... }
           const content = typeof data.content === "string" 
             ? data.content 
-            : data.content.message?.content || JSON.stringify(data.content)
+            : data.content.result || data.content.message?.content || JSON.stringify(data.content)
 
           setMessages((prev) => [
             ...prev,

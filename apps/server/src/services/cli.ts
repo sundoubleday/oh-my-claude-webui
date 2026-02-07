@@ -1,6 +1,15 @@
-import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
+import { homedir } from 'os'
+import { join } from 'path'
+
+// Windows: claude.cmd wraps node + cli.js, but spawn can't capture output from .cmd
+// Solution: Call node directly with cli.js path
+const CLAUDE_CLI_JS = join(
+  homedir(),
+  'AppData', 'Roaming', 'npm', 'node_modules',
+  '@anthropic-ai', 'claude-code', 'cli.js'
+)
 
 export class CLIServiceError extends Error {
   constructor(message: string) {
@@ -16,6 +25,7 @@ export interface CLIServiceOptions {
 
 export interface CLIMessage {
   type: string
+  result?: string
   message?: {
     role?: string
     content?: string
@@ -39,7 +49,8 @@ export interface CLIServiceEvents {
  * Uses Plan B (单次调用模式) - spawns a new process for each message.
  * Uses --print flag with --session-id for conversation context.
  * 
- * Note: Each message takes 2-5 seconds to start due to process spawn overhead.
+ * IMPORTANT: Uses Bun.spawn instead of child_process.spawn for proper
+ * stdout capture on Windows.
  * 
  * Events:
  * - ready: Service initialized
@@ -54,11 +65,10 @@ export class CLIService extends EventEmitter {
   private sessionId: string | null = null
   private timeoutMs: number
   private isProcessing: boolean = false
-  private currentProcess: ChildProcess | null = null
 
   constructor(options: CLIServiceOptions = {}) {
     super()
-    this.timeoutMs = options.timeoutMs ?? 120000 // 2 minutes default for Plan B
+    this.timeoutMs = options.timeoutMs ?? 120000 // 2 minutes default
   }
 
   /**
@@ -86,116 +96,76 @@ export class CLIService extends EventEmitter {
     this.isProcessing = true
     this.emit('processing', true)
 
-    return new Promise((resolve, reject) => {
-      let stdoutBuffer = ''
-      let stderrBuffer = ''
-      let timeoutId: NodeJS.Timeout | null = null
-
-      // Spawn claude with --print mode and stream-json output
-      // Note: --output-format stream-json requires --verbose when used with --print
-      const proc = spawn('claude', [
-        '--session-id', this.sessionId!,
-        '--print', content,
-        '--output-format', 'stream-json',
-        '--verbose'
+    try {
+      console.log('[CLIService] Spawning with Bun.spawn...')
+      console.log('[CLIService] Session:', this.sessionId)
+      
+      // Use Bun.spawn for proper stdout capture on Windows
+      const proc = Bun.spawn([
+        'node',
+        CLAUDE_CLI_JS,
+        '-p', content,
+        '--session-id', this.sessionId,
+        '--output-format', 'json'
       ], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: true
+        stdout: 'pipe',
+        stderr: 'pipe',
       })
 
-      this.currentProcess = proc
+      console.log('[CLIService] Process spawned, PID:', proc.pid)
 
-      // Set timeout
-      timeoutId = setTimeout(() => {
-        if (this.isProcessing) {
-          proc.kill('SIGTERM')
-          this.isProcessing = false
-          this.currentProcess = null
-          this.emit('processing', false)
-          this.emit('timeout')
+      // Set up timeout
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          proc.kill()
           reject(new CLIServiceError('Timeout: Claude CLI did not respond in time'))
-        }
-      }, this.timeoutMs)
+        }, this.timeoutMs)
+      })
 
-      // Handle stdout - parse stream-json lines
-      proc.stdout?.on('data', (data: Buffer) => {
-        stdoutBuffer += data.toString()
+      // Wait for process to complete with timeout
+      const resultPromise = (async () => {
+        const stdout = await new Response(proc.stdout).text()
+        const stderr = await new Response(proc.stderr).text()
         
-        // Process complete lines
-        const lines = stdoutBuffer.split('\n')
-        stdoutBuffer = lines.pop() || '' // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-
-          try {
-            const msg = JSON.parse(line) as CLIMessage
-            this.emit('message', msg)
-          } catch {
-            this.emit('raw', line)
-          }
-        }
-      })
-
-      // Handle stderr
-      proc.stderr?.on('data', (data: Buffer) => {
-        stderrBuffer += data.toString()
-        this.emit('error', data.toString())
-      })
-
-      // Handle process exit
-      proc.on('close', (code) => {
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
+        console.log('[CLIService] Process completed')
+        console.log('[CLIService] stdout length:', stdout.length)
+        
+        if (stderr) {
+          console.log('[CLIService] stderr:', stderr)
+          this.emit('error', stderr)
         }
 
-        this.isProcessing = false
-        this.currentProcess = null
-        this.emit('processing', false)
-
-        // Process any remaining buffer content
-        if (stdoutBuffer.trim()) {
+        // Parse and emit the JSON response
+        if (stdout.trim()) {
           try {
-            const msg = JSON.parse(stdoutBuffer) as CLIMessage
+            const msg = JSON.parse(stdout.trim()) as CLIMessage
+            console.log('[CLIService] Parsed message type:', msg.type)
             this.emit('message', msg)
           } catch {
-            this.emit('raw', stdoutBuffer)
+            console.log('[CLIService] Failed to parse JSON, emitting raw')
+            this.emit('raw', stdout)
           }
         }
 
-        this.emit('exit', code)
-
-        if (code === 0) {
-          resolve()
-        } else {
-          reject(new CLIServiceError(stderrBuffer || `Process exited with code ${code}`))
+        this.emit('exit', proc.exitCode)
+        
+        if (proc.exitCode !== 0 && proc.exitCode !== null) {
+          throw new CLIServiceError(stderr || `Process exited with code ${proc.exitCode}`)
         }
-      })
+      })()
 
-      proc.on('error', (err) => {
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
-
-        this.isProcessing = false
-        this.currentProcess = null
-        this.emit('processing', false)
-        this.emit('error', err.message)
-        reject(new CLIServiceError(`Failed to spawn process: ${err.message}`))
-      })
-    })
+      await Promise.race([resultPromise, timeoutPromise])
+      
+    } finally {
+      this.isProcessing = false
+      this.emit('processing', false)
+    }
   }
 
   /**
-   * Stop any running process
+   * Stop any running process (no-op for Plan B since each call is independent)
    */
   async stop(): Promise<void> {
-    if (this.currentProcess) {
-      this.currentProcess.kill('SIGTERM')
-      this.currentProcess = null
-    }
     this.isProcessing = false
     this.sessionId = null
   }
@@ -221,6 +191,3 @@ export class CLIService extends EventEmitter {
     return this.sessionId
   }
 }
-
-// Re-export for convenience
-export type { ChildProcess }
