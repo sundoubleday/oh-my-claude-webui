@@ -234,6 +234,9 @@ function ChatContent() {
         // Handle session ID update from CLI (real session ID)
         if (data.type === "sessionUpdate" && data.sessionId) {
           console.log('Received real session ID from CLI:', data.sessionId)
+          // CRITICAL: Update prevSessionIdRef BEFORE setSessionId to prevent
+          // the session change detection from clearing messages
+          prevSessionIdRef.current = data.sessionId
           setSessionId(data.sessionId)
           // Use history.replaceState to avoid page re-render that would lose messages
           window.history.replaceState(null, '', `/chat?session=${data.sessionId}`)
