@@ -149,16 +149,23 @@ function ChatContent() {
     }
   }, [input, metadata])
 
-  // WebSocket Connection
+  // Track session ID in a ref for WebSocket messages (avoids recreating WebSocket on session ID change)
+  const sessionIdRef = useRef<string>("")
   useEffect(() => {
-    if (!sessionId || !sessionReady) return
+    sessionIdRef.current = sessionId
+  }, [sessionId])
+
+  // WebSocket Connection - only depends on sessionReady, not sessionId
+  // This prevents WebSocket recreation when CLI returns a different session ID
+  useEffect(() => {
+    if (!sessionReady) return
 
     if (wsRef.current?.readyState === WebSocket.OPEN || 
         wsRef.current?.readyState === WebSocket.CONNECTING) {
       return
     }
 
-    console.log('Establishing WebSocket connection for session:', sessionId)
+    console.log('Establishing WebSocket connection')
     const websocket = new WebSocket("ws://localhost:5757/ws/chat")
     wsRef.current = websocket
 
@@ -202,6 +209,8 @@ function ChatContent() {
               timestamp: new Date().toISOString(),
             },
           ])
+          // Also reset processing status when message is received
+          setProcessingStatus("idle")
         }
         
         // Handle token usage
@@ -258,7 +267,7 @@ function ChatContent() {
         wsRef.current = null
       }
     }
-  }, [sessionId, sessionReady])
+  }, [sessionReady, router])
 
   const sendMessage = useCallback((e?: React.FormEvent) => {
     e?.preventDefault()
@@ -274,10 +283,11 @@ function ChatContent() {
     setMessages((prev) => [...prev, newMessage])
     setProcessingStatus("processing")
     
+    // Use sessionIdRef.current to always get the latest session ID
     ws.send(JSON.stringify({
       type: "message",
       content: input,
-      sessionId: sessionId
+      sessionId: sessionIdRef.current
     }))
 
     setInput("")
@@ -286,7 +296,7 @@ function ChatContent() {
     setTimeout(() => {
       inputRef.current?.focus()
     }, 10)
-  }, [input, ws, status, processingStatus, sessionId])
+  }, [input, ws, status, processingStatus])
 
   const selectCommand = useCallback((cmd: string) => {
     setInput(`/${cmd} `)
