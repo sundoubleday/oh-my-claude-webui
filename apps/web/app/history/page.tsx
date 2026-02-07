@@ -112,9 +112,9 @@ export default function HistoryPage() {
 
   const handleContinue = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation() // Prevent toggling expansion
-    const newSessionId = generateUUID()
-    toast.info("Starting a new chat session")
-    router.push(`/chat?session=${newSessionId}`)
+    // Use original session ID to continue the conversation
+    toast.info("Continuing previous session")
+    router.push(`/chat?session=${sessionId}`)
   }
 
   const formatDate = (dateString: string) => {
@@ -201,6 +201,21 @@ export default function HistoryPage() {
                 {/* Expanded Detail View */}
                 {isExpanded && (
                   <CardContent className="border-t bg-muted/10 p-0">
+                    {/* Back to list button */}
+                    <div className="sticky top-0 bg-background/95 backdrop-blur border-b p-2 flex items-center justify-between z-10">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => toggleExpand(transcript.sessionId)}
+                        className="gap-1 text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                        Back to list
+                      </Button>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {expandedTranscript?.messages.length || 0} messages
+                      </span>
+                    </div>
                     <div className="max-h-[500px] overflow-y-auto p-4 space-y-4">
                       {!expandedTranscript ? (
                         <div className="flex items-center justify-center py-12">

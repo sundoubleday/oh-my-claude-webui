@@ -46,12 +46,30 @@ function generateUUID(): string {
   })
 }
 
-// Format model name for display
+// Format model name for display - show full name with version
 function formatModelName(model: string): string {
-  if (model.includes('opus')) return 'Opus'
-  if (model.includes('sonnet')) return 'Sonnet'
-  if (model.includes('haiku')) return 'Haiku'
-  return model.split('-').slice(0, 2).join(' ')
+  // Examples: claude-opus-4-5-thinking -> Opus 4.5 Thinking
+  //           claude-sonnet-4-20250514 -> Sonnet 4
+  //           claude-3-5-sonnet-20241022 -> Sonnet 3.5
+  const lower = model.toLowerCase()
+  
+  // Extract model family
+  let family = ''
+  if (lower.includes('opus')) family = 'Opus'
+  else if (lower.includes('sonnet')) family = 'Sonnet'
+  else if (lower.includes('haiku')) family = 'Haiku'
+  else return model // Return raw if unknown
+  
+  // Extract version numbers
+  const versionMatch = model.match(/(\d+)[-.]?(\d+)?/)
+  const version = versionMatch 
+    ? versionMatch[2] ? `${versionMatch[1]}.${versionMatch[2]}` : versionMatch[1]
+    : ''
+  
+  // Check for special modes
+  const hasThinking = lower.includes('thinking')
+  
+  return `${family}${version ? ` ${version}` : ''}${hasThinking ? ' Thinking' : ''}`
 }
 
 // Get permission mode icon and label

@@ -94,9 +94,16 @@ function extractContent(msg: RawTranscriptLine): string | null {
   return null
 }
 
-// Helper: Clean content - remove [Pasted ~N lines] patterns
+// Helper: Clean content - remove [Pasted ~N lines] and similar patterns
 function cleanContent(content: string): string {
-  return content.replace(/\[Pasted ~\d+ lines?\]/g, '').trim()
+  return content
+    // Remove [Pasted ~N lines] pattern (various formats)
+    .replace(/\[Pasted\s*~?\s*\d+\s*lines?\s*\]/gi, '')
+    // Remove [Pasted ~N chars] pattern
+    .replace(/\[Pasted\s*~?\s*\d+\s*chars?\s*\]/gi, '')
+    // Remove extra whitespace
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 // Helper: Convert raw lines to display messages
