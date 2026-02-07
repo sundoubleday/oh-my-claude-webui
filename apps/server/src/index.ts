@@ -61,7 +61,9 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
   
   onMessage: async (event, ws) => {
     try {
-      const data = JSON.parse(event.data.toString())
+      const rawData = event.data.toString()
+      console.log('[WS] Raw message received:', rawData.substring(0, 200))
+      const data = JSON.parse(rawData)
       
       if (data.type === 'message') {
         const sessionId = data.sessionId
@@ -99,6 +101,7 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
           
           // Forward assistant response text
           cli.on('assistantMessage', (content: string) => {
+            console.log('[WS] Forwarding assistant message, length:', content.length)
             ws.send(JSON.stringify({ 
               type: 'message', 
               content: { role: 'assistant', content } 

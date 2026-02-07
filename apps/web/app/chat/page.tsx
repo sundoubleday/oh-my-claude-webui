@@ -113,19 +113,61 @@ function ChatContent() {
   const inputRef = useRef<HTMLInputElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
+  // Track previous session ID to detect changes
+  const prevSessionIdRef = useRef<string>("")
+
   // Initialize Session
   useEffect(() => {
     const urlSession = searchParams.get("session")
     if (urlSession) {
+      // Clear messages when switching to a different session
+      if (prevSessionIdRef.current && prevSessionIdRef.current !== urlSession) {
+        setMessages([])
+        setTokenUsage(null)
+        setMetadata(null)
+        setProcessingStatus("idle")
+      }
+      prevSessionIdRef.current = urlSession
       setSessionId(urlSession)
       setSessionReady(true)
     } else if (typeof window !== "undefined" && !sessionReady) {
       const newId = generateUUID()
+      prevSessionIdRef.current = newId
       setSessionId(newId)
       setSessionReady(true)
       router.replace(`/chat?session=${newId}`)
     }
   }, [searchParams, router, sessionReady])
+
+  // Load historical messages when resuming a session
+  useEffect(() => {
+    if (!sessionId || !sessionReady) return
+    
+    // Try to load history for this session
+    fetch(`http://localhost:5757/api/transcripts/${sessionId}`)
+      .then(res => {
+        if (!res.ok) return null
+        return res.json()
+      })
+      .then(data => {
+        if (data && data.messages && data.messages.length > 0) {
+          // Convert transcript format to Message format
+          const historicalMessages: Message[] = data.messages
+            .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && m.content)
+            .map((m: any) => ({
+              role: m.role as 'user' | 'assistant',
+              content: typeof m.content === 'string' ? cleanContent(m.content) : cleanContent(JSON.stringify(m.content)),
+              timestamp: m.timestamp || new Date().toISOString()
+            }))
+          if (historicalMessages.length > 0) {
+            setMessages(historicalMessages)
+          }
+        }
+      })
+      .catch(() => {
+        // No history found, that's fine for new sessions
+      })
+  }, [sessionId, sessionReady])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -181,6 +223,7 @@ function ChatContent() {
       if (!isMounted) return
       try {
         const data = JSON.parse(event.data)
+        console.log('[WebSocket] Received:', data.type, data)
         
         // Handle init message - session metadata
         if (data.type === "init" && data.metadata) {
@@ -192,7 +235,8 @@ function ChatContent() {
         if (data.type === "sessionUpdate" && data.sessionId) {
           console.log('Received real session ID from CLI:', data.sessionId)
           setSessionId(data.sessionId)
-          router.replace(`/chat?session=${data.sessionId}`)
+          // Use history.replaceState to avoid page re-render that would lose messages
+          window.history.replaceState(null, '', `/chat?session=${data.sessionId}`)
         }
         
         // Handle assistant message
