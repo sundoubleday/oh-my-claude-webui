@@ -25,17 +25,40 @@ export interface CLIServiceOptions {
 
 export interface CLIMessage {
   type: string
+  subtype?: string
   result?: string
   message?: {
     role?: string
-    content?: string
+    content?: string | Array<{ type: string; text?: string }>
   }
   [key: string]: unknown
 }
 
+/** Session metadata from CLI init message */
+export interface SessionMetadata {
+  model: string
+  permissionMode: string
+  claudeCodeVersion: string
+  slashCommands: string[]
+  skills: string[]
+  agents: string[]
+}
+
+/** Token usage from CLI result message */
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  totalCostUsd: number
+}
+
 export interface CLIServiceEvents {
   ready: () => void
+  init: (metadata: SessionMetadata) => void
   message: (msg: CLIMessage) => void
+  assistantMessage: (content: string) => void
+  tokenUsage: (usage: TokenUsage) => void
   raw: (line: string) => void
   error: (error: string) => void
   exit: (code: number | null) => void
@@ -46,15 +69,18 @@ export interface CLIServiceEvents {
 /**
  * CLIService - Manages Claude CLI process lifecycle
  * 
- * Uses Plan B (单次调用模式) - spawns a new process for each message.
- * Uses --print flag with --session-id for conversation context.
+ * Uses stream-json format to get rich metadata (model, mode, commands, token usage).
+ * Spawns a new process for each message with --session-id for context.
  * 
  * IMPORTANT: Uses Bun.spawn instead of child_process.spawn for proper
  * stdout capture on Windows.
  * 
  * Events:
  * - ready: Service initialized
- * - message: Parsed JSON message from stdout
+ * - init: Session metadata received (model, mode, commands)
+ * - message: Raw parsed JSON message from stdout
+ * - assistantMessage: Extracted assistant response text
+ * - tokenUsage: Token usage statistics
  * - raw: Non-JSON line from stdout
  * - error: stderr output or error message
  * - exit: Process exited
@@ -65,6 +91,7 @@ export class CLIService extends EventEmitter {
   private sessionId: string | null = null
   private timeoutMs: number
   private isProcessing: boolean = false
+  private metadata: SessionMetadata | null = null
 
   constructor(options: CLIServiceOptions = {}) {
     super()
@@ -81,7 +108,47 @@ export class CLIService extends EventEmitter {
   }
 
   /**
-   * Send a message to the Claude CLI using --print mode
+   * Parse stream-json output (one JSON object per line)
+   */
+  private parseStreamJson(output: string): CLIMessage[] {
+    const messages: CLIMessage[] = []
+    const lines = output.split('\n').filter(line => line.trim())
+    
+    for (const line of lines) {
+      try {
+        const msg = JSON.parse(line) as CLIMessage
+        messages.push(msg)
+      } catch {
+        // Skip non-JSON lines
+        console.log('[CLIService] Skipping non-JSON line:', line.substring(0, 50))
+      }
+    }
+    
+    return messages
+  }
+
+  /**
+   * Extract text content from assistant message
+   */
+  private extractAssistantContent(msg: CLIMessage): string | null {
+    if (msg.type !== 'assistant' || !msg.message) return null
+    
+    const content = msg.message.content
+    if (typeof content === 'string') return content
+    
+    // Handle array of content blocks
+    if (Array.isArray(content)) {
+      return content
+        .filter(block => block.type === 'text' && block.text)
+        .map(block => block.text)
+        .join('\n')
+    }
+    
+    return null
+  }
+
+  /**
+   * Send a message to the Claude CLI using stream-json format
    * @param content - Message content to send
    */
   async sendMessage(content: string): Promise<void> {
@@ -97,16 +164,17 @@ export class CLIService extends EventEmitter {
     this.emit('processing', true)
 
     try {
-      console.log('[CLIService] Spawning with Bun.spawn...')
+      console.log('[CLIService] Spawning with Bun.spawn (stream-json)...')
       console.log('[CLIService] Session:', this.sessionId)
       
-      // Use Bun.spawn for proper stdout capture on Windows
+      // Use stream-json format for rich metadata
       const proc = Bun.spawn([
         'node',
         CLAUDE_CLI_JS,
         '-p', content,
         '--session-id', this.sessionId,
-        '--output-format', 'json'
+        '--output-format', 'stream-json',
+        '--verbose'
       ], {
         stdout: 'pipe',
         stderr: 'pipe',
@@ -132,19 +200,70 @@ export class CLIService extends EventEmitter {
         
         if (stderr) {
           console.log('[CLIService] stderr:', stderr)
-          this.emit('error', stderr)
+          // Only emit as error if it's not just debug output
+          if (!stderr.includes('[DEBUG]')) {
+            this.emit('error', stderr)
+          }
         }
 
-        // Parse and emit the JSON response
-        if (stdout.trim()) {
-          try {
-            const msg = JSON.parse(stdout.trim()) as CLIMessage
-            console.log('[CLIService] Parsed message type:', msg.type)
-            this.emit('message', msg)
-          } catch {
-            console.log('[CLIService] Failed to parse JSON, emitting raw')
-            this.emit('raw', stdout)
+        // Parse stream-json output (multiple JSON lines)
+        const messages = this.parseStreamJson(stdout)
+        console.log('[CLIService] Parsed', messages.length, 'messages')
+
+        let assistantText: string | null = null
+        let resultText: string | null = null
+
+        for (const msg of messages) {
+          // Emit raw message for debugging
+          this.emit('message', msg)
+
+          // Handle init message - extract metadata
+          if (msg.type === 'system' && msg.subtype === 'init') {
+            this.metadata = {
+              model: (msg.model as string) || 'unknown',
+              permissionMode: (msg.permissionMode as string) || 'default',
+              claudeCodeVersion: (msg.claude_code_version as string) || 'unknown',
+              slashCommands: (msg.slash_commands as string[]) || [],
+              skills: (msg.skills as string[]) || [],
+              agents: (msg.agents as string[]) || [],
+            }
+            console.log('[CLIService] Metadata:', this.metadata.model, this.metadata.permissionMode)
+            this.emit('init', this.metadata)
           }
+
+          // Handle assistant message - extract content
+          if (msg.type === 'assistant') {
+            const text = this.extractAssistantContent(msg)
+            if (text) {
+              assistantText = text
+            }
+          }
+
+          // Handle result message - extract final text and token usage
+          if (msg.type === 'result') {
+            resultText = (msg.result as string) || null
+            
+            // Extract token usage
+            const usage = msg.usage as Record<string, number> | undefined
+            if (usage) {
+              const tokenUsage: TokenUsage = {
+                inputTokens: usage.input_tokens || 0,
+                outputTokens: usage.output_tokens || 0,
+                cacheReadTokens: usage.cache_read_input_tokens || 0,
+                cacheCreationTokens: usage.cache_creation_input_tokens || 0,
+                totalCostUsd: (msg.total_cost_usd as number) || 0,
+              }
+              console.log('[CLIService] Token usage:', tokenUsage)
+              this.emit('tokenUsage', tokenUsage)
+            }
+          }
+        }
+
+        // Emit the final assistant response (prefer result.result over assistant message)
+        const finalText = resultText || assistantText
+        if (finalText) {
+          console.log('[CLIService] Emitting assistant message, length:', finalText.length)
+          this.emit('assistantMessage', finalText)
         }
 
         this.emit('exit', proc.exitCode)
@@ -163,11 +282,12 @@ export class CLIService extends EventEmitter {
   }
 
   /**
-   * Stop any running process (no-op for Plan B since each call is independent)
+   * Stop any running process (no-op since each call is independent)
    */
   async stop(): Promise<void> {
     this.isProcessing = false
     this.sessionId = null
+    this.metadata = null
   }
 
   /**
@@ -189,5 +309,12 @@ export class CLIService extends EventEmitter {
    */
   getSessionId(): string | null {
     return this.sessionId
+  }
+
+  /**
+   * Get session metadata (model, mode, commands, etc.)
+   */
+  getMetadata(): SessionMetadata | null {
+    return this.metadata
   }
 }

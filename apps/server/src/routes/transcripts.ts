@@ -5,12 +5,29 @@ import { join } from 'path'
 
 const transcripts = new Hono()
 
-// TranscriptLine types
-type TranscriptLine = 
-  | { type: 'user', timestamp: string, content: string }
-  | { type: 'assistant', timestamp: string, content: string }
-  | { type: 'tool_use', timestamp: string, tool_name: string, tool_input: object }
-  | { type: 'tool_result', timestamp: string, tool_name: string, tool_output: object }
+// Raw transcript line (as stored in JSONL)
+interface RawTranscriptLine {
+  type: string
+  subtype?: string
+  timestamp?: string
+  content?: string
+  message?: {
+    role?: string
+    content?: string | Array<{ type: string; text?: string }>
+  }
+  result?: string
+  tool_name?: string
+  tool_input?: object
+  tool_output?: object
+  [key: string]: unknown
+}
+
+// Simplified message for frontend display
+interface DisplayMessage {
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: string
+}
 
 interface TranscriptMetadata {
   sessionId: string
@@ -21,7 +38,7 @@ interface TranscriptMetadata {
 
 interface TranscriptContent {
   sessionId: string
-  messages: TranscriptLine[]
+  messages: DisplayMessage[]
 }
 
 // Helper: Get transcripts directory path
@@ -30,9 +47,9 @@ function getTranscriptsDir(): string {
 }
 
 // Helper: Parse JSONL content
-function parseJSONL(content: string): TranscriptLine[] {
+function parseJSONL(content: string): RawTranscriptLine[] {
   const lines = content.split('\n').filter(line => line.trim())
-  const messages: TranscriptLine[] = []
+  const messages: RawTranscriptLine[] = []
   
   for (const line of lines) {
     try {
@@ -46,13 +63,99 @@ function parseJSONL(content: string): TranscriptLine[] {
   return messages
 }
 
+// Helper: Extract text content from message
+function extractContent(msg: RawTranscriptLine): string | null {
+  // Direct content field
+  if (typeof msg.content === 'string') {
+    return cleanContent(msg.content)
+  }
+  
+  // Result field (from result type)
+  if (typeof msg.result === 'string') {
+    return cleanContent(msg.result)
+  }
+  
+  // Message object with content
+  if (msg.message?.content) {
+    const content = msg.message.content
+    if (typeof content === 'string') {
+      return cleanContent(content)
+    }
+    // Array of content blocks
+    if (Array.isArray(content)) {
+      const text = content
+        .filter(block => block.type === 'text' && block.text)
+        .map(block => block.text)
+        .join('\n')
+      return text ? cleanContent(text) : null
+    }
+  }
+  
+  return null
+}
+
+// Helper: Clean content - remove [Pasted ~N lines] patterns
+function cleanContent(content: string): string {
+  return content.replace(/\[Pasted ~\d+ lines?\]/g, '').trim()
+}
+
+// Helper: Convert raw lines to display messages
+function toDisplayMessages(rawLines: RawTranscriptLine[]): DisplayMessage[] {
+  const messages: DisplayMessage[] = []
+  
+  for (const line of rawLines) {
+    // User message
+    if (line.type === 'user') {
+      const content = extractContent(line)
+      if (content) {
+        messages.push({
+          role: 'user',
+          content,
+          timestamp: line.timestamp || new Date().toISOString(),
+        })
+      }
+    }
+    
+    // Assistant message
+    if (line.type === 'assistant') {
+      const content = extractContent(line)
+      if (content) {
+        messages.push({
+          role: 'assistant',
+          content,
+          timestamp: line.timestamp || new Date().toISOString(),
+        })
+      }
+    }
+    
+    // Result message (final response)
+    if (line.type === 'result' && line.subtype === 'success') {
+      const content = extractContent(line)
+      if (content) {
+        // Check if we already have this content from assistant message
+        const lastMsg = messages[messages.length - 1]
+        if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== content) {
+          messages.push({
+            role: 'assistant',
+            content,
+            timestamp: line.timestamp || new Date().toISOString(),
+          })
+        }
+      }
+    }
+  }
+  
+  return messages
+}
+
 // Helper: Extract metadata from JSONL file
 async function extractMetadata(filePath: string, sessionId: string): Promise<TranscriptMetadata | null> {
   try {
     const content = await readFile(filePath, 'utf-8')
-    const messages = parseJSONL(content)
+    const rawLines = parseJSONL(content)
+    const displayMessages = toDisplayMessages(rawLines)
     
-    if (messages.length === 0) {
+    if (displayMessages.length === 0) {
       return {
         sessionId,
         messageCount: 0,
@@ -63,9 +166,9 @@ async function extractMetadata(filePath: string, sessionId: string): Promise<Tra
     
     return {
       sessionId,
-      messageCount: messages.length,
-      firstMessageTime: messages[0].timestamp,
-      lastMessageTime: messages[messages.length - 1].timestamp,
+      messageCount: displayMessages.length,
+      firstMessageTime: displayMessages[0].timestamp,
+      lastMessageTime: displayMessages[displayMessages.length - 1].timestamp,
     }
   } catch (error) {
     console.error(`Failed to extract metadata for ${sessionId}:`, error)
@@ -97,8 +200,10 @@ transcripts.get('/', async (c) => {
     })
     
     const allMetadata = await Promise.all(metadataPromises)
-    // Filter out failed extractions
-    const validMetadata = allMetadata.filter((m): m is TranscriptMetadata => m !== null)
+    // Filter out failed extractions and empty sessions
+    const validMetadata = allMetadata
+      .filter((m): m is TranscriptMetadata => m !== null && m.messageCount > 0)
+      .sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime())
     
     return c.json(validMetadata)
   } catch (error) {
@@ -124,11 +229,12 @@ transcripts.get('/:sessionId', async (c) => {
       throw error
     }
     
-    const messages = parseJSONL(content)
+    const rawLines = parseJSONL(content)
+    const displayMessages = toDisplayMessages(rawLines)
     
     const result: TranscriptContent = {
       sessionId,
-      messages,
+      messages: displayMessages,
     }
     
     return c.json(result)

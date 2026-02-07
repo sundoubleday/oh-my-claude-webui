@@ -7,7 +7,7 @@ import transcriptsRoutes from './routes/transcripts'
 import skillsRoutes from './routes/skills'
 import commandsRoutes from './routes/commands'
 import pluginsRoutes from './routes/plugins'
-import { CLIService } from './services/cli'
+import { CLIService, type SessionMetadata, type TokenUsage } from './services/cli'
 
 const { upgradeWebSocket, websocket } = createBunWebSocket()
 
@@ -77,19 +77,49 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
           cli = new CLIService()
           cliInstances.set(sessionId, cli)
           
-          // Forward CLI message events to WebSocket
-          cli.on('message', (msg) => {
-            ws.send(JSON.stringify({ type: 'message', content: msg }))
+          // Forward session metadata (model, mode, commands)
+          cli.on('init', (metadata: SessionMetadata) => {
+            ws.send(JSON.stringify({ 
+              type: 'init', 
+              metadata 
+            }))
+          })
+          
+          // Forward assistant response text
+          cli.on('assistantMessage', (content: string) => {
+            ws.send(JSON.stringify({ 
+              type: 'message', 
+              content: { role: 'assistant', content } 
+            }))
+          })
+          
+          // Forward token usage statistics
+          cli.on('tokenUsage', (usage: TokenUsage) => {
+            ws.send(JSON.stringify({ 
+              type: 'tokenUsage', 
+              usage 
+            }))
+          })
+          
+          // Forward processing state
+          cli.on('processing', (isProcessing: boolean) => {
+            ws.send(JSON.stringify({ 
+              type: 'status', 
+              status: isProcessing ? 'processing' : 'ready' 
+            }))
           })
           
           // Forward CLI error events to WebSocket
-          cli.on('error', (error) => {
+          cli.on('error', (error: string) => {
             ws.send(JSON.stringify({ type: 'error', error }))
           })
           
           // Handle CLI exit
-          cli.on('exit', (code) => {
-            ws.send(JSON.stringify({ type: 'status', status: 'stopped' }))
+          cli.on('exit', (code: number | null) => {
+            // Only send stopped if there was an error
+            if (code !== 0 && code !== null) {
+              ws.send(JSON.stringify({ type: 'status', status: 'stopped' }))
+            }
           })
         }
         
@@ -97,7 +127,6 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
         if (!cli.isRunning()) {
           try {
             await cli.start(sessionId)
-            ws.send(JSON.stringify({ type: 'status', status: 'processing' }))
           } catch (startError) {
             ws.send(JSON.stringify({ 
               type: 'error', 
