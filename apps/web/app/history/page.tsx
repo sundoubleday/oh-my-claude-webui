@@ -10,7 +10,8 @@ import {
   ChevronUp, 
   User,
   Bot,
-  Loader2
+  Loader2,
+  Trash2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { 
@@ -115,6 +116,29 @@ export default function HistoryPage() {
     // Use original session ID to continue the conversation
     toast.info("Continuing previous session")
     router.push(`/chat?session=${sessionId}`)
+  }
+
+  const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation() // Prevent toggling expansion
+    
+    if (!confirm("Are you sure you want to delete this session?")) {
+      return
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/${sessionId}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error("Failed to delete transcript")
+      
+      // Remove from local state
+      setTranscripts(prev => prev.filter(t => t.sessionId !== sessionId))
+      if (expandedId === sessionId) {
+        setExpandedId(null)
+        setExpandedTranscript(null)
+      }
+      toast.success("Session deleted")
+    } catch (error) {
+      toast.error("Failed to delete session")
+    }
   }
 
   const formatDate = (dateString: string) => {
@@ -249,20 +273,31 @@ export default function HistoryPage() {
                   </CardContent>
                 )}
 
-                <CardFooter className="bg-muted/5 p-4 flex justify-end gap-2 border-t">
+                <CardFooter className="bg-muted/5 p-4 flex justify-between gap-2 border-t">
                   <Button 
-                    variant="outline" 
-                    onClick={() => toggleExpand(transcript.sessionId)}
+                    variant="ghost" 
+                    size="sm"
+                    onClick={(e) => handleDelete(e, transcript.sessionId)}
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
                   >
-                    {isExpanded ? "Close Details" : "View Details"}
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete
                   </Button>
-                  <Button 
-                    onClick={(e) => handleContinue(e, transcript.sessionId)}
-                    className="gap-2"
-                  >
-                    Continue Chat
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => toggleExpand(transcript.sessionId)}
+                    >
+                      {isExpanded ? "Close Details" : "View Details"}
+                    </Button>
+                    <Button 
+                      onClick={(e) => handleContinue(e, transcript.sessionId)}
+                      className="gap-2"
+                    >
+                      Continue Chat
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </CardFooter>
               </Card>
             )

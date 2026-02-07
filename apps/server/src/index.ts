@@ -85,6 +85,18 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
             }))
           })
           
+          // Forward real session ID from CLI
+          cli.on('sessionUpdate', (realSessionId: string) => {
+            console.log('Forwarding sessionUpdate:', realSessionId)
+            // Update the map key to use real session ID
+            cliInstances.delete(sessionId)
+            cliInstances.set(realSessionId, cli)
+            ws.send(JSON.stringify({ 
+              type: 'sessionUpdate', 
+              sessionId: realSessionId 
+            }))
+          })
+          
           // Forward assistant response text
           cli.on('assistantMessage', (content: string) => {
             ws.send(JSON.stringify({ 

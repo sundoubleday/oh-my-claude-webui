@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, unlink } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -248,6 +248,29 @@ transcripts.get('/:sessionId', async (c) => {
   } catch (error) {
     console.error('Failed to read transcript:', error)
     return c.json({ error: 'Failed to read transcript', code: 500 }, 500)
+  }
+})
+
+// DELETE /api/transcripts/:sessionId - Delete a transcript
+transcripts.delete('/:sessionId', async (c) => {
+  try {
+    const sessionId = c.req.param('sessionId')
+    const transcriptsDir = getTranscriptsDir()
+    const filePath = join(transcriptsDir, `${sessionId}.jsonl`)
+    
+    try {
+      await unlink(filePath)
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        return c.json({ error: 'Transcript not found', code: 404 }, 404)
+      }
+      throw error
+    }
+    
+    return c.json({ success: true, sessionId })
+  } catch (error) {
+    console.error('Failed to delete transcript:', error)
+    return c.json({ error: 'Failed to delete transcript', code: 500 }, 500)
   }
 })
 

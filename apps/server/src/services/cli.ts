@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { join } from 'path'
+import { existsSync } from 'fs'
 
 // Windows: claude.cmd wraps node + cli.js, but spawn can't capture output from .cmd
 // Solution: Call node directly with cli.js path
@@ -10,6 +11,12 @@ const CLAUDE_CLI_JS = join(
   'AppData', 'Roaming', 'npm', 'node_modules',
   '@anthropic-ai', 'claude-code', 'cli.js'
 )
+
+// Check if a session already exists (has a transcript file)
+function sessionExists(sessionId: string): boolean {
+  const transcriptPath = join(homedir(), '.claude', 'transcripts', `${sessionId}.jsonl`)
+  return existsSync(transcriptPath)
+}
 
 export class CLIServiceError extends Error {
   constructor(message: string) {
@@ -36,6 +43,7 @@ export interface CLIMessage {
 
 /** Session metadata from CLI init message */
 export interface SessionMetadata {
+  sessionId: string  // Real session ID from CLI
   model: string
   permissionMode: string
   claudeCodeVersion: string
@@ -56,6 +64,7 @@ export interface TokenUsage {
 export interface CLIServiceEvents {
   ready: () => void
   init: (metadata: SessionMetadata) => void
+  sessionUpdate: (sessionId: string) => void  // Real CLI session ID
   message: (msg: CLIMessage) => void
   assistantMessage: (content: string) => void
   tokenUsage: (usage: TokenUsage) => void
@@ -169,8 +178,6 @@ export class CLIService extends EventEmitter {
       console.log('[CLIService] Session:', this.sessionId, 'Created:', this.sessionCreated)
       
       // Build command args
-      // First message: use --session-id to create session
-      // Subsequent messages: use --resume to continue session
       const args = [
         'node',
         CLAUDE_CLI_JS,
@@ -179,18 +186,24 @@ export class CLIService extends EventEmitter {
         '--verbose'
       ]
       
-      if (this.sessionCreated) {
-        // Resume existing session
+      // If we have a real CLI session ID (from previous response), use --resume
+      // Otherwise let CLI create a new session
+      if (this.sessionId && this.sessionCreated) {
+        console.log('[CLIService] Resuming existing session:', this.sessionId)
         args.push('--resume', this.sessionId)
-      } else {
-        // Create new session with specific ID
-        args.push('--session-id', this.sessionId)
+      } else if (this.sessionId && sessionExists(this.sessionId)) {
+        // Resuming a session from history (transcript file exists)
+        console.log('[CLIService] Resuming session from history:', this.sessionId)
+        args.push('--resume', this.sessionId)
       }
+      // If no session ID, CLI will create a new one and we'll capture it from init message
       
       // Use stream-json format for rich metadata
+      // Set cwd to user's home directory to avoid running in server directory
       const proc = Bun.spawn(args, {
         stdout: 'pipe',
         stderr: 'pipe',
+        cwd: homedir(),
       })
 
       console.log('[CLIService] Process spawned, PID:', proc.pid)
@@ -230,9 +243,18 @@ export class CLIService extends EventEmitter {
           // Emit raw message for debugging
           this.emit('message', msg)
 
-          // Handle init message - extract metadata
+          // Handle init message - extract metadata and real session ID
           if (msg.type === 'system' && msg.subtype === 'init') {
+            // Extract real session ID from CLI
+            const realSessionId = msg.session_id as string
+            if (realSessionId && realSessionId !== this.sessionId) {
+              console.log('[CLIService] Got real session ID from CLI:', realSessionId)
+              this.sessionId = realSessionId
+              this.emit('sessionUpdate', realSessionId)
+            }
+            
             this.metadata = {
+              sessionId: realSessionId || this.sessionId || 'unknown',
               model: (msg.model as string) || 'unknown',
               permissionMode: (msg.permissionMode as string) || 'default',
               claudeCodeVersion: (msg.claude_code_version as string) || 'unknown',

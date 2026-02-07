@@ -181,6 +181,13 @@ function ChatContent() {
           setMetadata(data.metadata)
         }
         
+        // Handle session ID update from CLI (real session ID)
+        if (data.type === "sessionUpdate" && data.sessionId) {
+          console.log('Received real session ID from CLI:', data.sessionId)
+          setSessionId(data.sessionId)
+          router.replace(`/chat?session=${data.sessionId}`)
+        }
+        
         // Handle assistant message
         if (data.type === "message" && data.content) {
           const content = typeof data.content === "string" 
