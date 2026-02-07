@@ -10,7 +10,7 @@ export class CLIServiceError extends Error {
 }
 
 export interface CLIServiceOptions {
-  /** Response timeout in milliseconds (default: 60000) */
+  /** Response timeout in milliseconds (default: 120000) */
   timeoutMs?: number
 }
 
@@ -30,94 +30,188 @@ export interface CLIServiceEvents {
   error: (error: string) => void
   exit: (code: number | null) => void
   timeout: () => void
+  processing: (isProcessing: boolean) => void
 }
 
 /**
  * CLIService - Manages Claude CLI process lifecycle
  * 
- * Uses Plan A (持续交互模式) for persistent session communication.
- * Spawns claude process with --session-id and --output-format stream-json.
+ * Uses Plan B (单次调用模式) - spawns a new process for each message.
+ * Uses --print flag with --session-id for conversation context.
+ * 
+ * Note: Each message takes 2-5 seconds to start due to process spawn overhead.
  * 
  * Events:
- * - ready: Process started successfully
+ * - ready: Service initialized
  * - message: Parsed JSON message from stdout
  * - raw: Non-JSON line from stdout
- * - error: stderr output
+ * - error: stderr output or error message
  * - exit: Process exited
  * - timeout: No response within timeout period
+ * - processing: Processing state changed
  */
 export class CLIService extends EventEmitter {
-  private process: ChildProcess | null = null
   private sessionId: string | null = null
   private timeoutMs: number
-  private responseTimeout: NodeJS.Timeout | null = null
-  private stdoutBuffer: string = ''
+  private isProcessing: boolean = false
+  private currentProcess: ChildProcess | null = null
 
   constructor(options: CLIServiceOptions = {}) {
     super()
-    this.timeoutMs = options.timeoutMs ?? 60000
+    this.timeoutMs = options.timeoutMs ?? 120000 // 2 minutes default for Plan B
   }
 
   /**
-   * Start the Claude CLI process
+   * Initialize the CLI service with a session ID
    * @param sessionId - Optional session ID (UUID format). Auto-generated if not provided.
    */
   async start(sessionId?: string): Promise<void> {
-    if (this.process) {
-      throw new CLIServiceError('Process already started. Call stop() first.')
-    }
-
     this.sessionId = sessionId || randomUUID()
-    this.stdoutBuffer = ''
-
-    this.process = spawn('claude', [
-      '--session-id', this.sessionId,
-      '--output-format', 'stream-json'
-    ], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true
-    })
-
-    this.setupProcessHandlers()
     this.emit('ready')
   }
 
   /**
-   * Send a message to the Claude CLI
+   * Send a message to the Claude CLI using --print mode
    * @param content - Message content to send
    */
   async sendMessage(content: string): Promise<void> {
-    if (!this.process?.stdin) {
-      throw new CLIServiceError('Process not started. Call start() first.')
+    if (!this.sessionId) {
+      throw new CLIServiceError('Service not started. Call start() first.')
     }
 
-    const message = {
-      type: 'user',
-      message: { role: 'user', content }
+    if (this.isProcessing) {
+      throw new CLIServiceError('Previous message still processing. Please wait.')
     }
 
-    this.process.stdin.write(JSON.stringify(message) + '\n')
-    this.resetTimeout()
+    this.isProcessing = true
+    this.emit('processing', true)
+
+    return new Promise((resolve, reject) => {
+      let stdoutBuffer = ''
+      let stderrBuffer = ''
+      let timeoutId: NodeJS.Timeout | null = null
+
+      // Spawn claude with --print mode and stream-json output
+      // Note: --output-format stream-json requires --verbose when used with --print
+      const proc = spawn('claude', [
+        '--session-id', this.sessionId!,
+        '--print', content,
+        '--output-format', 'stream-json',
+        '--verbose'
+      ], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: true
+      })
+
+      this.currentProcess = proc
+
+      // Set timeout
+      timeoutId = setTimeout(() => {
+        if (this.isProcessing) {
+          proc.kill('SIGTERM')
+          this.isProcessing = false
+          this.currentProcess = null
+          this.emit('processing', false)
+          this.emit('timeout')
+          reject(new CLIServiceError('Timeout: Claude CLI did not respond in time'))
+        }
+      }, this.timeoutMs)
+
+      // Handle stdout - parse stream-json lines
+      proc.stdout?.on('data', (data: Buffer) => {
+        stdoutBuffer += data.toString()
+        
+        // Process complete lines
+        const lines = stdoutBuffer.split('\n')
+        stdoutBuffer = lines.pop() || '' // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue
+
+          try {
+            const msg = JSON.parse(line) as CLIMessage
+            this.emit('message', msg)
+          } catch {
+            this.emit('raw', line)
+          }
+        }
+      })
+
+      // Handle stderr
+      proc.stderr?.on('data', (data: Buffer) => {
+        stderrBuffer += data.toString()
+        this.emit('error', data.toString())
+      })
+
+      // Handle process exit
+      proc.on('close', (code) => {
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
+
+        this.isProcessing = false
+        this.currentProcess = null
+        this.emit('processing', false)
+
+        // Process any remaining buffer content
+        if (stdoutBuffer.trim()) {
+          try {
+            const msg = JSON.parse(stdoutBuffer) as CLIMessage
+            this.emit('message', msg)
+          } catch {
+            this.emit('raw', stdoutBuffer)
+          }
+        }
+
+        this.emit('exit', code)
+
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new CLIServiceError(stderrBuffer || `Process exited with code ${code}`))
+        }
+      })
+
+      proc.on('error', (err) => {
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
+
+        this.isProcessing = false
+        this.currentProcess = null
+        this.emit('processing', false)
+        this.emit('error', err.message)
+        reject(new CLIServiceError(`Failed to spawn process: ${err.message}`))
+      })
+    })
   }
 
   /**
-   * Stop the Claude CLI process gracefully
+   * Stop any running process
    */
   async stop(): Promise<void> {
-    this.clearTimeout()
-
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      this.process = null
-      this.sessionId = null
+    if (this.currentProcess) {
+      this.currentProcess.kill('SIGTERM')
+      this.currentProcess = null
     }
+    this.isProcessing = false
+    this.sessionId = null
   }
 
   /**
-   * Check if the process is currently running
+   * Check if the service is ready to accept messages
    */
   isRunning(): boolean {
-    return this.process !== null
+    return this.sessionId !== null
+  }
+
+  /**
+   * Check if currently processing a message
+   */
+  isBusy(): boolean {
+    return this.isProcessing
   }
 
   /**
@@ -125,68 +219,6 @@ export class CLIService extends EventEmitter {
    */
   getSessionId(): string | null {
     return this.sessionId
-  }
-
-  private setupProcessHandlers(): void {
-    if (!this.process) return
-
-    // Handle stdout - parse stream-json lines
-    this.process.stdout?.on('data', (data: Buffer) => {
-      this.handleStdout(data)
-    })
-
-    // Handle stderr - emit errors
-    this.process.stderr?.on('data', (data: Buffer) => {
-      this.emit('error', data.toString())
-    })
-
-    // Handle process exit
-    this.process.on('exit', (code) => {
-      this.clearTimeout()
-      this.emit('exit', code)
-      this.process = null
-      this.sessionId = null
-    })
-  }
-
-  private handleStdout(data: Buffer): void {
-    // Reset timeout on any output (response received)
-    this.clearTimeout()
-
-    // Append to buffer for handling partial JSON
-    this.stdoutBuffer += data.toString()
-
-    // Process complete lines
-    const lines = this.stdoutBuffer.split('\n')
-    
-    // Keep incomplete last line in buffer
-    this.stdoutBuffer = lines.pop() || ''
-
-    for (const line of lines) {
-      if (!line.trim()) continue
-
-      try {
-        const msg = JSON.parse(line) as CLIMessage
-        this.emit('message', msg)
-      } catch {
-        this.emit('raw', line)
-      }
-    }
-  }
-
-  private resetTimeout(): void {
-    this.clearTimeout()
-    
-    this.responseTimeout = setTimeout(() => {
-      this.emit('timeout')
-    }, this.timeoutMs)
-  }
-
-  private clearTimeout(): void {
-    if (this.responseTimeout) {
-      clearTimeout(this.responseTimeout)
-      this.responseTimeout = null
-    }
   }
 }
 
