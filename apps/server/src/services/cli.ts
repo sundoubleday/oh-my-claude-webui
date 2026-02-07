@@ -92,6 +92,7 @@ export class CLIService extends EventEmitter {
   private timeoutMs: number
   private isProcessing: boolean = false
   private metadata: SessionMetadata | null = null
+  private sessionCreated: boolean = false  // Track if session was already created
 
   constructor(options: CLIServiceOptions = {}) {
     super()
@@ -165,17 +166,29 @@ export class CLIService extends EventEmitter {
 
     try {
       console.log('[CLIService] Spawning with Bun.spawn (stream-json)...')
-      console.log('[CLIService] Session:', this.sessionId)
+      console.log('[CLIService] Session:', this.sessionId, 'Created:', this.sessionCreated)
       
-      // Use stream-json format for rich metadata
-      const proc = Bun.spawn([
+      // Build command args
+      // First message: use --session-id to create session
+      // Subsequent messages: use --resume to continue session
+      const args = [
         'node',
         CLAUDE_CLI_JS,
         '-p', content,
-        '--session-id', this.sessionId,
         '--output-format', 'stream-json',
         '--verbose'
-      ], {
+      ]
+      
+      if (this.sessionCreated) {
+        // Resume existing session
+        args.push('--resume', this.sessionId)
+      } else {
+        // Create new session with specific ID
+        args.push('--session-id', this.sessionId)
+      }
+      
+      // Use stream-json format for rich metadata
+      const proc = Bun.spawn(args, {
         stdout: 'pipe',
         stderr: 'pipe',
       })
@@ -268,6 +281,11 @@ export class CLIService extends EventEmitter {
 
         this.emit('exit', proc.exitCode)
         
+        // Mark session as created after successful first message
+        if (proc.exitCode === 0 || proc.exitCode === null) {
+          this.sessionCreated = true
+        }
+        
         if (proc.exitCode !== 0 && proc.exitCode !== null) {
           throw new CLIServiceError(stderr || `Process exited with code ${proc.exitCode}`)
         }
@@ -288,6 +306,7 @@ export class CLIService extends EventEmitter {
     this.isProcessing = false
     this.sessionId = null
     this.metadata = null
+    this.sessionCreated = false
   }
 
   /**
