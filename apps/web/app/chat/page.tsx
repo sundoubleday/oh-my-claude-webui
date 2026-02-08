@@ -814,9 +814,10 @@ function ChatContent() {
         </div>
       </div>
 
-      {/* Right File Explorer */}
+      {/* Right File Explorer - key forces re-mount when project changes */}
       {showFileExplorer && (
         <FileExplorer 
+          key={currentProjectPath || 'empty'}
           initialPath={currentProjectPath} 
           onFileSelect={handleFileSelect}
         />

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Folder, FileCode, ChevronRight, ChevronDown, RefreshCw, File } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,10 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
   const [loading, setLoading] = useState(false)
   const [history, setHistory] = useState<string[]>([])
 
-  const loadFiles = async (path: string) => {
+  // Memoized load files function
+  const loadFiles = useCallback(async (path: string) => {
+    if (!path) return
+    
     setLoading(true)
     try {
       const res = await fetch(`http://localhost:5757/api/files?path=${encodeURIComponent(path)}`)
@@ -33,41 +36,41 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
         setCurrentPath(data.path) // Update to resolved path
       }
     } catch (e) {
-      console.error(e)
+      console.error('[FileExplorer] Failed to load files:', e)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   // Update currentPath when initialPath changes (project switch)
   useEffect(() => {
+    console.log('[FileExplorer] initialPath changed:', initialPath)
     if (initialPath && initialPath !== currentPath) {
       setCurrentPath(initialPath)
       setHistory([]) // Clear history on project switch
     }
-  }, [initialPath])
+  }, [initialPath, currentPath])
 
   // Load files when currentPath changes
   useEffect(() => {
-    loadFiles(currentPath)
+    console.log('[FileExplorer] currentPath changed:', currentPath)
+    if (currentPath) {
+      loadFiles(currentPath)
+    }
+  }, [currentPath, loadFiles])
+
+  const handleNavigate = useCallback((path: string) => {
+    setHistory(prev => [...prev, currentPath])
+    setCurrentPath(path)
   }, [currentPath])
 
-  const handleNavigate = (path: string) => {
-    setHistory(prev => [...prev, currentPath])
-    loadFiles(path)
-  }
-
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     const prev = history[history.length - 1]
     if (prev) {
       setHistory(h => h.slice(0, -1))
-      loadFiles(prev)
-    } else {
-        // Go up one level logic if no history
-        // Simple hack: split by separator and pop
-        // But for now, history stack is safer
+      setCurrentPath(prev)
     }
-  }
+  }, [history])
 
   return (
     <div className="flex flex-col h-full bg-muted/5 border-l border-border w-64 md:w-72 lg:w-80 shrink-0">
@@ -75,20 +78,35 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Files
         </span>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => loadFiles(currentPath)}>
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="h-6 w-6" 
+          onClick={() => currentPath && loadFiles(currentPath)}
+          disabled={loading}
+        >
           <RefreshCw className={cn("w-3 h-3", loading && "animate-spin")} />
         </Button>
       </div>
       
       <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/20 truncate font-mono border-b border-border/50 flex items-center gap-2">
-        <button onClick={handleBack} disabled={history.length === 0} className="hover:text-foreground disabled:opacity-30">
+        <button 
+          onClick={handleBack} 
+          disabled={history.length === 0} 
+          className="hover:text-foreground disabled:opacity-30"
+        >
            ←
         </button>
-        <span title={currentPath}>{currentPath || "Home"}</span>
+        <span title={currentPath}>{currentPath || "Select a project"}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
-        {items.map((item) => (
+        {!currentPath && (
+          <div className="text-xs text-muted-foreground text-center py-8">
+            Select a project to view files
+          </div>
+        )}
+        {currentPath && items.map((item) => (
           <div
             key={item.path}
             className={cn(
