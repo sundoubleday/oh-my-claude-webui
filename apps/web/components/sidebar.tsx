@@ -222,7 +222,7 @@ function SidebarContent() {
               {getRecentSessions().map(session => (
                 <Link
                   key={`recent-${session.sessionId}`}
-                  href={`/chat?session=${session.sessionId}`}
+                  href={`/chat?session=${session.sessionId}&project=${encodeURIComponent(session.projectPath)}`}
                   className={cn(
                     "group flex flex-col gap-0.5 px-2 py-2 rounded-md transition-all hover:bg-accent",
                     currentSessionId === session.sessionId 
@@ -285,7 +285,7 @@ function SidebarContent() {
                       {projectSessions.map(session => (
                         <Link
                           key={session.sessionId}
-                          href={`/chat?session=${session.sessionId}`}
+                          href={`/chat?session=${session.sessionId}&project=${encodeURIComponent(session.projectPath)}`}
                           className={cn(
                             "group flex flex-col gap-0.5 px-2 py-2 rounded-md transition-all hover:bg-accent",
                             currentSessionId === session.sessionId 

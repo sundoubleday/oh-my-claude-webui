@@ -242,8 +242,9 @@ function ChatContent() {
           if (historicalMessages.length > 0) {
             console.log('[Chat] ✅ Loaded', historicalMessages.length, 'messages from history')
             setMessages(historicalMessages)
-            // If we found history, we should also set the project path if it's not set
-            if (!currentProjectPath && data.projectPath) {
+            // Always update project path from session data to ensure File Explorer syncs
+            if (data.projectPath) {
+              console.log('[Chat] Updating project path from history:', data.projectPath)
               setCurrentProjectPath(data.projectPath)
             }
           }
