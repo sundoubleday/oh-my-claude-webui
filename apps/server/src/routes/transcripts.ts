@@ -220,32 +220,6 @@ async function listProjectSessions(projectDir: string, projectDirName: string): 
   return sessions
 }
 
-// Helper: Extract metadata from JSONL file
-async function extractMetadata(
-  filePath: string, 
-  sessionInfo: SessionInfo
-): Promise<TranscriptMetadata | null> {
-  try {
-    const content = await readFile(filePath, 'utf-8')
-    const rawLines = parseJSONL(content)
-    const displayMessages = toDisplayMessages(rawLines)
-    
-    if (displayMessages.length === 0) {
-      return null // Skip empty sessions
-    }
-    
-    return {
-      ...sessionInfo,
-      messageCount: displayMessages.length,
-      firstMessageTime: displayMessages[0].timestamp,
-      lastMessageTime: displayMessages[displayMessages.length - 1].timestamp,
-    }
-  } catch (error) {
-    console.error(`Failed to extract metadata for ${sessionInfo.sessionId}:`, error)
-    return null
-  }
-}
-
 // GET /api/transcripts - Retrieve transcript list from all projects
 transcripts.get('/', async (c) => {
   try {
