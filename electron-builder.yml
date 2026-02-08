@@ -1,0 +1,74 @@
+appId: com.ohmyclaude.webui
+productName: Oh My Claude
+copyright: Copyright © 2025 Oh My Claude
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist-electron/**/*
+  - "!node_modules/**/*"
+
+extraResources:
+  - from: apps/web/.next/standalone
+    to: server
+    filter:
+      - "**/*"
+  - from: apps/web/.next/static
+    to: server/.next/static
+    filter:
+      - "**/*"
+  - from: apps/web/public
+    to: server/public
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Oh My Claude
+
+mac:
+  target:
+    - dmg
+    - zip
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icon.png
+  category: Development
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+publish:
+  provider: github
+  releaseType: draft

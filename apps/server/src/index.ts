@@ -4,6 +4,8 @@ import { createBunWebSocket } from 'hono/bun'
 import type { WSContext } from 'hono/ws'
 import mcpRoutes from './routes/mcp'
 import transcriptsRoutes from './routes/transcripts'
+import projectsRoutes from './routes/projects'
+import filesRoutes from './routes/files'
 import skillsRoutes from './routes/skills'
 import commandsRoutes from './routes/commands'
 import pluginsRoutes from './routes/plugins'
@@ -39,6 +41,12 @@ app.route('/api/mcp', mcpRoutes)
 
 // Transcripts 历史端点
 app.route('/api/transcripts', transcriptsRoutes)
+
+// Projects 管理端点
+app.route('/api/projects', projectsRoutes)
+
+// Files 文件系统端点
+app.route('/api/files', filesRoutes)
 
 // Skills 管理端点
 app.route('/api/skills', skillsRoutes)
@@ -101,11 +109,17 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
           
           // Forward assistant response text
           cli.on('assistantMessage', (content: string) => {
-            console.log('[WS] Forwarding assistant message, length:', content.length)
-            ws.send(JSON.stringify({ 
-              type: 'message', 
-              content: { role: 'assistant', content } 
-            }))
+            console.log('[WS] ✅ Forwarding assistantMessage to client, length:', content.length)
+            try {
+              const message = JSON.stringify({ 
+                type: 'message', 
+                content: content  // Send content directly as string, not wrapped
+              })
+              console.log('[WS] Sending message:', message.substring(0, 200))
+              ws.send(message)
+            } catch (error) {
+              console.error('[WS] Failed to send assistant message:', error)
+            }
           })
           
           // Forward token usage statistics
@@ -117,10 +131,11 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
           })
           
           // Forward processing state
-          cli.on('processing', (isProcessing: boolean) => {
+          cli.on('processing', (isProcessing: boolean, task?: string) => {
             ws.send(JSON.stringify({ 
               type: 'status', 
-              status: isProcessing ? 'processing' : 'ready' 
+              status: isProcessing ? 'processing' : 'ready',
+              task: task || ''
             }))
           })
           
@@ -141,7 +156,7 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
         // Start CLI if not running
         if (!cli.isRunning()) {
           try {
-            await cli.start(sessionId)
+            await cli.start(sessionId, data.projectPath)
           } catch (startError) {
             ws.send(JSON.stringify({ 
               type: 'error', 
@@ -152,7 +167,7 @@ app.get('/ws/chat', upgradeWebSocket((c) => ({
         }
         
         // Send message to CLI
-        await cli.sendMessage(data.content)
+        await cli.sendMessage(data.content, data.attachments, data.history)
       } else {
         ws.send(JSON.stringify({ 
           type: 'error', 

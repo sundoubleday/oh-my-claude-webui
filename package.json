@@ -1,21 +1,95 @@
 {
   "name": "oh-my-claude-webui",
+  "version": "0.1.0",
   "private": true,
+  "description": "Desktop GUI for Claude Code CLI",
+  "author": "Oh My Claude",
+  "license": "MIT",
+  "main": "dist-electron/main.js",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
     "dev": "concurrently \"bun run --filter web dev\" \"bun run --filter server dev\"",
+    "dev:electron": "concurrently \"bun run dev\" \"wait-on http://localhost:3000 && electron .\"",
     "build": "bun run --filter shared build && bun run --filter web build && bun run --filter server build",
+    "build:electron": "bun run build && bun run electron:build",
+    "electron:build": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --outdir=dist-electron --external:electron",
+    "electron:dev": "bun run electron:build && electron .",
+    "electron:pack": "bun run build:electron && electron-builder --dir",
+    "electron:dist": "bun run build:electron && electron-builder",
     "start": "bun run --filter web start",
     "test": "bun test",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {
     "@playwright/test": "latest",
     "@types/bun": "latest",
+    "@types/node": "^20.0.0",
     "concurrently": "^8.2.0",
-    "typescript": "^5.3.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.3.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.ohmyclaude.webui",
+    "productName": "Oh My Claude",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "apps/web/.next/standalone/**/*",
+      "apps/web/.next/static/**/*",
+      "apps/web/public/**/*",
+      "apps/server/dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "apps/web/.next/standalone",
+        "to": "server"
+      },
+      {
+        "from": "apps/web/.next/static",
+        "to": "server/.next/static"
+      },
+      {
+        "from": "apps/web/public",
+        "to": "server/public"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Development"
+    }
   }
 }

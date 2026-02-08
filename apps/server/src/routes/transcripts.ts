@@ -1,24 +1,31 @@
 import { Hono } from 'hono'
-import { readdir, readFile, unlink } from 'fs/promises'
+import { readdir, readFile, unlink, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 
 const transcripts = new Hono()
 
-// Raw transcript line (as stored in JSONL)
-interface RawTranscriptLine {
+// Helper: Get projects directory path
+function getProjectsDir(): string {
+  return join(homedir(), '.claude', 'projects')
+}
+
+// Raw message line from Claude Code projects (as stored in JSONL)
+interface RawProjectLine {
   type: string
   subtype?: string
   timestamp?: string
+  uuid?: string
+  sessionId?: string
+  cwd?: string
+  // User message format
   content?: string
   message?: {
     role?: string
     content?: string | Array<{ type: string; text?: string }>
   }
-  result?: string
-  tool_name?: string
-  tool_input?: object
-  tool_output?: object
+  // For filtering out non-conversation entries
+  data?: unknown
   [key: string]: unknown
 }
 
@@ -29,65 +36,99 @@ interface DisplayMessage {
   timestamp: string
 }
 
-interface TranscriptMetadata {
-  sessionId: string
+interface SessionInfo {
+  sessionId: string  // UUID format from projects
+  projectDir: string // Directory name (e.g., "E--Vibe-Coding-Open-Code-project")
+  projectPath: string // Readable path (e.g., "E:\Vibe Coding\Open Code\project")
+}
+
+interface TranscriptMetadata extends SessionInfo {
   messageCount: number
   firstMessageTime: string
   lastMessageTime: string
+  title?: string // First user message or summary
 }
 
-interface TranscriptContent {
-  sessionId: string
+interface TranscriptContent extends SessionInfo {
   messages: DisplayMessage[]
 }
 
-// Helper: Get transcripts directory path
-function getTranscriptsDir(): string {
-  return join(homedir(), '.claude', 'transcripts')
+// Helper: Convert project directory name to readable path
+// E--Vibe-Coding-Open-Code-project -> E:\Vibe-Coding-Open-Code-project
+function dirNameToPath(dirName: string): string {
+  return dirName
+    .replace(/^([A-Za-z])--/, '$1:\\')
+    .replace(/--/g, '\\')
 }
 
 // Helper: Parse JSONL content
-function parseJSONL(content: string): RawTranscriptLine[] {
+function parseJSONL(content: string): RawProjectLine[] {
   const lines = content.split('\n').filter(line => line.trim())
-  const messages: RawTranscriptLine[] = []
+  const messages: RawProjectLine[] = []
   
   for (const line of lines) {
     try {
       const parsed = JSON.parse(line)
       messages.push(parsed)
     } catch (error) {
-      console.warn(`Skipping corrupted JSONL line: ${line.substring(0, 50)}...`)
+      // Skip corrupted lines silently
     }
   }
   
   return messages
 }
 
+// Helper: Extract metadata from JSONL file
+async function extractMetadata(
+  filePath: string, 
+  sessionInfo: SessionInfo
+): Promise<TranscriptMetadata | null> {
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    const rawLines = parseJSONL(content)
+    const displayMessages = toDisplayMessages(rawLines)
+    
+    if (displayMessages.length === 0) {
+      return null // Skip empty sessions
+    }
+    
+    // Extract title from first user message
+    const firstUserMsg = displayMessages.find(m => m.role === 'user')
+    const title = firstUserMsg ? (firstUserMsg.content.slice(0, 100) + (firstUserMsg.content.length > 100 ? '...' : '')) : 'New Conversation'
+    
+    return {
+      ...sessionInfo,
+      messageCount: displayMessages.length,
+      firstMessageTime: displayMessages[0].timestamp,
+      lastMessageTime: displayMessages[displayMessages.length - 1].timestamp,
+      title
+    }
+  } catch (error) {
+    console.error(`Failed to extract metadata for ${sessionInfo.sessionId}:`, error)
+    return null
+  }
+}
+
 // Helper: Extract text content from message
-function extractContent(msg: RawTranscriptLine): string | null {
-  // Direct content field
-  if (typeof msg.content === 'string') {
+function extractContent(msg: RawProjectLine): string | null {
+  // Direct content field (user messages in old format)
+  if (typeof msg.content === 'string' && msg.content.trim()) {
     return cleanContent(msg.content)
   }
   
-  // Result field (from result type)
-  if (typeof msg.result === 'string') {
-    return cleanContent(msg.result)
-  }
-  
-  // Message object with content
+  // Message object with content (new format)
   if (msg.message?.content) {
     const content = msg.message.content
-    if (typeof content === 'string') {
+    if (typeof content === 'string' && content.trim()) {
       return cleanContent(content)
     }
-    // Array of content blocks
+    // Array of content blocks (Claude response format)
     if (Array.isArray(content)) {
-      const text = content
+      const textParts = content
         .filter(block => block.type === 'text' && block.text)
-        .map(block => block.text)
-        .join('\n')
-      return text ? cleanContent(text) : null
+        .map(block => block.text as string)
+      const text = textParts.join('\n')
+      return text.trim() ? cleanContent(text) : null
     }
   }
   
@@ -107,10 +148,15 @@ function cleanContent(content: string): string {
 }
 
 // Helper: Convert raw lines to display messages
-function toDisplayMessages(rawLines: RawTranscriptLine[]): DisplayMessage[] {
+function toDisplayMessages(rawLines: RawProjectLine[]): DisplayMessage[] {
   const messages: DisplayMessage[] = []
   
   for (const line of rawLines) {
+    // Skip non-conversation entries (progress, queue-operation, etc.)
+    if (line.data || line.type === 'progress' || line.type === 'queue-operation') {
+      continue
+    }
+    
     // User message
     if (line.type === 'user') {
       const content = extractContent(line)
@@ -127,19 +173,7 @@ function toDisplayMessages(rawLines: RawTranscriptLine[]): DisplayMessage[] {
     if (line.type === 'assistant') {
       const content = extractContent(line)
       if (content) {
-        messages.push({
-          role: 'assistant',
-          content,
-          timestamp: line.timestamp || new Date().toISOString(),
-        })
-      }
-    }
-    
-    // Result message (final response)
-    if (line.type === 'result' && line.subtype === 'success') {
-      const content = extractContent(line)
-      if (content) {
-        // Check if we already have this content from assistant message
+        // Avoid duplicate content from consecutive assistant messages
         const lastMsg = messages[messages.length - 1]
         if (!lastMsg || lastMsg.role !== 'assistant' || lastMsg.content !== content) {
           messages.push({
@@ -155,56 +189,94 @@ function toDisplayMessages(rawLines: RawTranscriptLine[]): DisplayMessage[] {
   return messages
 }
 
+// Helper: List all sessions in a project directory
+async function listProjectSessions(projectDir: string, projectDirName: string): Promise<SessionInfo[]> {
+  const sessions: SessionInfo[] = []
+  
+  try {
+    const entries = await readdir(projectDir)
+    const jsonlFiles = entries.filter(f => f.endsWith('.jsonl') && !f.includes('memory'))
+    
+    for (const file of jsonlFiles) {
+      const sessionId = file.replace('.jsonl', '')
+      sessions.push({
+        sessionId,
+        projectDir: projectDirName,
+        projectPath: dirNameToPath(projectDirName),
+      })
+    }
+  } catch (error) {
+    // Directory doesn't exist or can't be read
+  }
+  
+  return sessions
+}
+
 // Helper: Extract metadata from JSONL file
-async function extractMetadata(filePath: string, sessionId: string): Promise<TranscriptMetadata | null> {
+async function extractMetadata(
+  filePath: string, 
+  sessionInfo: SessionInfo
+): Promise<TranscriptMetadata | null> {
   try {
     const content = await readFile(filePath, 'utf-8')
     const rawLines = parseJSONL(content)
     const displayMessages = toDisplayMessages(rawLines)
     
     if (displayMessages.length === 0) {
-      return {
-        sessionId,
-        messageCount: 0,
-        firstMessageTime: '',
-        lastMessageTime: '',
-      }
+      return null // Skip empty sessions
     }
     
     return {
-      sessionId,
+      ...sessionInfo,
       messageCount: displayMessages.length,
       firstMessageTime: displayMessages[0].timestamp,
       lastMessageTime: displayMessages[displayMessages.length - 1].timestamp,
     }
   } catch (error) {
-    console.error(`Failed to extract metadata for ${sessionId}:`, error)
+    console.error(`Failed to extract metadata for ${sessionInfo.sessionId}:`, error)
     return null
   }
 }
 
-// GET /api/transcripts - Retrieve transcript list
+// GET /api/transcripts - Retrieve transcript list from all projects
 transcripts.get('/', async (c) => {
   try {
-    const transcriptsDir = getTranscriptsDir()
+    const projectsDir = getProjectsDir()
     
-    let files: string[]
+    let projectDirs: string[]
     
     try {
-      files = await readdir(transcriptsDir)
+      const entries = await readdir(projectsDir)
+      // Filter only directories (project folders)
+      const statPromises = entries.map(async (entry) => {
+        try {
+          const entryPath = join(projectsDir, entry)
+          const entryStat = await stat(entryPath)
+          return entryStat.isDirectory() ? entry : null
+        } catch {
+          return null
+        }
+      })
+      const results = await Promise.all(statPromises)
+      projectDirs = results.filter((d): d is string => d !== null)
     } catch (error) {
       // Directory doesn't exist or can't be read
       return c.json([])
     }
     
-    // Filter only .jsonl files with session ID pattern
-    const sessionFiles = files.filter(f => f.startsWith('ses_') && f.endsWith('.jsonl'))
+    // Get all sessions from all projects
+    const allSessionsPromises = projectDirs.map(async (dirName) => {
+      const projectPath = join(projectsDir, dirName)
+      return listProjectSessions(projectPath, dirName)
+    })
     
-    // Extract metadata for each file
-    const metadataPromises = sessionFiles.map(async (filename) => {
-      const sessionId = filename.replace('.jsonl', '')
-      const filePath = join(transcriptsDir, filename)
-      return extractMetadata(filePath, sessionId)
+    const allSessionArrays = await Promise.all(allSessionsPromises)
+    const allSessions = allSessionArrays.flat()
+    
+    // Extract metadata for each session
+    const metadataPromises = allSessions.map(async (sessionInfo) => {
+      const filePath = join(projectsDir, sessionInfo.projectDir, `${sessionInfo.sessionId}.jsonl`)
+      return extractMetadata(filePath, sessionInfo)
     })
     
     const allMetadata = await Promise.all(metadataPromises)
@@ -220,12 +292,73 @@ transcripts.get('/', async (c) => {
   }
 })
 
-// GET /api/transcripts/:sessionId - Retrieve single transcript
-transcripts.get('/:sessionId', async (c) => {
+// Helper: Find session across all projects by sessionId only
+async function findSessionByIdOnly(sessionId: string): Promise<{ projectDir: string; filePath: string } | null> {
+  const projectsDir = getProjectsDir()
+  
+  try {
+    const entries = await readdir(projectsDir)
+    
+    for (const entry of entries) {
+      try {
+        const entryPath = join(projectsDir, entry)
+        const entryStat = await stat(entryPath)
+        if (!entryStat.isDirectory()) continue
+        
+        const sessionFile = join(entryPath, `${sessionId}.jsonl`)
+        try {
+          await stat(sessionFile)
+          // Found it!
+          return { projectDir: entry, filePath: sessionFile }
+        } catch {
+          // Not in this project, continue searching
+        }
+      } catch {
+        // Skip invalid entries
+      }
+    }
+  } catch {
+    // Projects dir doesn't exist
+  }
+  
+  return null
+}
+
+// GET /api/transcripts/by-session/:sessionId - Find and retrieve transcript by sessionId only (search all projects)
+transcripts.get('/by-session/:sessionId', async (c) => {
   try {
     const sessionId = c.req.param('sessionId')
-    const transcriptsDir = getTranscriptsDir()
-    const filePath = join(transcriptsDir, `${sessionId}.jsonl`)
+    
+    const found = await findSessionByIdOnly(sessionId)
+    if (!found) {
+      return c.json({ error: 'Transcript not found', code: 404 }, 404)
+    }
+    
+    const content = await readFile(found.filePath, 'utf-8')
+    const rawLines = parseJSONL(content)
+    const displayMessages = toDisplayMessages(rawLines)
+    
+    const result: TranscriptContent = {
+      sessionId,
+      projectDir: found.projectDir,
+      projectPath: dirNameToPath(found.projectDir),
+      messages: displayMessages,
+    }
+    
+    return c.json(result)
+  } catch (error) {
+    console.error('Failed to read transcript:', error)
+    return c.json({ error: 'Failed to read transcript', code: 500 }, 500)
+  }
+})
+
+// GET /api/transcripts/:projectDir/:sessionId - Retrieve single transcript
+transcripts.get('/:projectDir/:sessionId', async (c) => {
+  try {
+    const projectDir = c.req.param('projectDir')
+    const sessionId = c.req.param('sessionId')
+    const projectsDir = getProjectsDir()
+    const filePath = join(projectsDir, projectDir, `${sessionId}.jsonl`)
     
     let content: string
     try {
@@ -242,6 +375,8 @@ transcripts.get('/:sessionId', async (c) => {
     
     const result: TranscriptContent = {
       sessionId,
+      projectDir,
+      projectPath: dirNameToPath(projectDir),
       messages: displayMessages,
     }
     
@@ -252,12 +387,13 @@ transcripts.get('/:sessionId', async (c) => {
   }
 })
 
-// DELETE /api/transcripts/:sessionId - Delete a transcript
-transcripts.delete('/:sessionId', async (c) => {
+// DELETE /api/transcripts/:projectDir/:sessionId - Delete a transcript
+transcripts.delete('/:projectDir/:sessionId', async (c) => {
   try {
+    const projectDir = c.req.param('projectDir')
     const sessionId = c.req.param('sessionId')
-    const transcriptsDir = getTranscriptsDir()
-    const filePath = join(transcriptsDir, `${sessionId}.jsonl`)
+    const projectsDir = getProjectsDir()
+    const filePath = join(projectsDir, projectDir, `${sessionId}.jsonl`)
     
     try {
       await unlink(filePath)
@@ -268,7 +404,7 @@ transcripts.delete('/:sessionId', async (c) => {
       throw error
     }
     
-    return c.json({ success: true, sessionId })
+    return c.json({ success: true, projectDir, sessionId })
   } catch (error) {
     console.error('Failed to delete transcript:', error)
     return c.json({ error: 'Failed to delete transcript', code: 500 }, 500)

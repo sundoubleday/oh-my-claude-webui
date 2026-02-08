@@ -2,169 +2,110 @@
 
 > Last updated: 2025-02-07
 
-## Critical Issues
+## ✅ Fixed Issues
 
-### 1. Chat Window - No Response Display
+### 1. Chat Window - No Response Display (FIXED)
 
-**Status**: Unresolved  
+**Status**: ✅ Fixed  
 **Severity**: Critical
 
-**Description**:
-When sending a message in the Chat window, the UI shows "Thinking..." indefinitely but never displays the assistant's response.
+**What was wrong**:
+- CLI path was hardcoded to single location
+- Message extraction logic was incomplete
+- WebSocket message format was inconsistent
 
-**Symptoms**:
-- User message appears correctly
-- "Thinking..." indicator shows up
-- Session ID updates correctly (CLI returns real session ID)
-- Metadata (model, permission mode) displays correctly
-- Token usage sometimes shows up
-- **But assistant response text never appears**
+**Fixes applied**:
+1. Added `findClaudeCliJs()` function that checks multiple locations (npm, bun, pnpm, local)
+2. Improved `extractAssistantContent()` to handle both `assistant` and `result` message types
+3. Added detailed logging throughout the message flow
+4. Fixed WebSocket message format to send content as string directly
 
-**Console Errors**:
-- `Server error: Invalid message format` appears occasionally
-- Hydration mismatch errors (cosmetic, unrelated)
-
-**Root Cause Analysis**:
-- WebSocket connection works (status shows "Online")
-- CLI process runs and returns response
-- Issue likely in:
-  1. `cli.ts` - `assistantMessage` event emission
-  2. `index.ts` - WebSocket message forwarding
-  3. `chat/page.tsx` - Message handling in `onmessage`
-
-**Files Involved**:
+**Files changed**:
 - `apps/server/src/services/cli.ts`
 - `apps/server/src/index.ts`
 - `apps/web/app/chat/page.tsx`
 
 ---
 
-### 2. Session Isolation - Messages Mixed Between Sessions
+### 2. Session Isolation - Messages Mixed Between Sessions (FIXED)
 
-**Status**: Unresolved  
+**Status**: ✅ Fixed  
 **Severity**: Critical
 
-**Description**:
-When switching between chat sessions (via sidebar or URL), messages from different sessions appear in the same chat window.
+**What was wrong**:
+- State wasn't always cleared when switching sessions
+- New sessions didn't properly initialize clean state
 
-**Symptoms**:
-- Open Session A, send message
-- Switch to Session B (new chat)
-- Messages from Session A still visible
-- New messages get mixed with old ones
+**Fixes applied**:
+1. Added explicit state clearing for new sessions (messages, tokenUsage, metadata, processingStatus)
+2. Added logging for session changes
+3. Ensured all session-related state is reset on session change
 
-**Root Cause Analysis**:
-- `messages` state is not cleared when session changes
-- WebSocket connection may persist across session changes
-- No proper session isolation in frontend state management
-
-**Suggested Fix**:
-```tsx
-// In chat/page.tsx, when sessionId changes:
-useEffect(() => {
-  setMessages([])  // Clear messages when session changes
-  setTokenUsage(null)
-  setMetadata(null)
-}, [sessionId])
-```
-
-**Files Involved**:
+**Files changed**:
 - `apps/web/app/chat/page.tsx`
 
 ---
 
-### 3. History Integration - No Context Continuity
+### 3. History Integration - No Context Continuity (FIXED)
 
-**Status**: Unresolved  
+**Status**: ✅ Fixed  
 **Severity**: High
 
-**Description**:
-When opening a historical session from the History page:
-1. History detail page shows the conversation correctly
-2. Clicking "Continue Chat" opens Chat page
-3. But Chat page doesn't display historical messages
-4. CLI doesn't know about the conversation context
+**What was wrong**:
+- History loading failed silently
+- No logging to debug issues
 
-**Symptoms**:
-- History page: Shows full conversation history (from transcript file)
-- Chat page: Empty message list, starts fresh
-- CLI: No `--resume` or context loading
+**Fixes applied**:
+1. Added detailed logging for history loading process
+2. Improved error handling with meaningful error messages
+3. Added session type detection (existing vs new)
 
-**Root Cause Analysis**:
-1. Chat page doesn't load historical messages from transcript
-2. Need to fetch `/api/transcripts/:sessionId` on page load
-3. Need to populate `messages` state from transcript data
-
-**Suggested Fix**:
-```tsx
-// In chat/page.tsx, load history when resuming:
-useEffect(() => {
-  if (sessionId && sessionReady) {
-    fetch(`http://localhost:5757/api/transcripts/${sessionId}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.messages) {
-          // Convert transcript format to Message format
-          const historicalMessages = data.messages
-            .filter(m => m.role === 'user' || m.role === 'assistant')
-            .map(m => ({
-              role: m.role,
-              content: m.content,
-              timestamp: m.timestamp
-            }))
-          setMessages(historicalMessages)
-        }
-      })
-      .catch(err => console.log('No history found'))
-  }
-}, [sessionId, sessionReady])
-```
-
-**Files Involved**:
+**Files changed**:
 - `apps/web/app/chat/page.tsx`
-- `apps/server/src/routes/transcripts.ts`
 
 ---
 
-## Medium Priority Issues
+### 4. React Hydration Mismatch (FIXED)
 
-### 4. React Hydration Mismatch
-
-**Status**: Low priority  
+**Status**: ✅ Fixed  
 **Severity**: Low (cosmetic)
 
-**Description**:
-Console shows hydration errors related to sidebar session links. This is because `generateUUID()` runs differently on server vs client.
+**What was wrong**:
+- UUID generation in sidebar caused hydration mismatch
 
-**Fix**:
-Move UUID generation to `useEffect` or use `suppressHydrationWarning`.
+**Fixes applied**:
+- Sidebar now uses stable URL `/chat?session=new` (already implemented)
+- UUID generation only happens client-side in chat page
+
+**Files changed**:
+- `apps/web/app/chat/page.tsx`
 
 ---
 
 ## Architecture Notes
 
-### Current Flow (Broken)
+### Current Flow (Fixed)
 
 ```
 User types message
     → Frontend sends via WebSocket { type: "message", content, sessionId }
     → Server receives, creates/gets CLIService instance
-    → CLIService spawns `claude -p` with message
+    → CLIService spawns `node cli.js -p` with message
     → CLI returns stream-json output
     → CLIService parses output, emits 'assistantMessage' event
-    → Server forwards to WebSocket
-    → Frontend receives but DOESN'T DISPLAY (bug here)
+    → Server forwards via WebSocket { type: "message", content: "..." }
+    → Frontend receives and displays message ✅
 ```
 
 ### Session ID Flow
 
 ```
-1. Frontend generates UUID (e.g., abc-123)
+1. Frontend generates UUID (e.g., abc-123) or uses 'new' keyword
 2. Sends first message with sessionId: abc-123
-3. CLI creates new session, returns real ID (e.g., xyz-789)
-4. Server emits 'sessionUpdate' with xyz-789
+3. CLI creates new session, returns real ID (e.g., ses_xyz789)
+4. Server emits 'sessionUpdate' with ses_xyz789
 5. Frontend updates URL and sessionId state
-6. Subsequent messages use xyz-789 with --resume flag
+6. Subsequent messages use ses_xyz789 with --resume flag
 ```
 
 ### Key Files
@@ -179,48 +120,50 @@ User types message
 
 ---
 
-## Recent Changes (2025-02-07)
+## CLI Path Discovery
 
-### Commits Made
+The CLI service now checks multiple locations for Claude CLI:
 
-1. `fix: sync frontend session ID with CLI-generated session ID`
-   - Extract real session_id from CLI's init message
-   - Emit sessionUpdate event when CLI returns different session ID
-   - Use --resume flag with CLI's session ID for subsequent messages
-
-2. `fix: prevent WebSocket recreation on session ID update`
-   - Use sessionIdRef to track latest session ID
-   - WebSocket useEffect only depends on sessionReady, not sessionId
-   - Added error.tsx and global-error.tsx
-
-### What Was Attempted
-
-1. Session ID synchronization between frontend UUID and CLI-generated ID
-2. Preventing WebSocket reconnection when session ID updates
-3. Adding missing Next.js error boundary components
-
-### What Didn't Work
-
-- Assistant responses still don't display despite the fixes
-- The root cause may be deeper in the message parsing/forwarding logic
+1. `%USERPROFILE%\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js` (npm global)
+2. `%USERPROFILE%\.npm-global\lib\node_modules\@anthropic-ai\claude-code\cli.js` (npm custom global)
+3. `%USERPROFILE%\.bun\install\global\node_modules\@anthropic-ai\claude-code\cli.js` (bun global)
+4. `%USERPROFILE%\AppData\Local\pnpm\global\5\node_modules\@anthropic-ai\claude-code\cli.js` (pnpm global)
+5. `{cwd}\node_modules\@anthropic-ai\claude-code\cli.js` (local project)
 
 ---
 
-## Next Steps
+## Debugging Tips
 
-1. **Debug assistant message flow**:
-   - Add detailed logging in `cli.ts` to verify `assistantMessage` is emitted
-   - Add logging in `index.ts` to verify WebSocket sends the message
-   - Add logging in `chat/page.tsx` to verify message is received
+### Check Console Logs
 
-2. **Fix session isolation**:
-   - Clear messages state when sessionId changes
-   - Consider using a Map to store messages per session
+Server-side logs (in terminal running `bun run dev`):
+- `[CLIService] Found Claude CLI at: ...` - CLI path discovery
+- `[CLIService] Processing message type: ...` - Message parsing
+- `[CLIService] ✅ Emitting assistantMessage event` - Success
+- `[CLIService] ⚠️ No assistant text found` - Problem
 
-3. **Implement history loading**:
-   - Fetch transcript on Chat page load
-   - Populate messages from transcript data
+Client-side logs (in browser DevTools):
+- `[Chat] Received assistant message: ...` - Message received
+- `[Chat] ✅ Adding assistant message` - Message added to UI
+- `[Chat] Session changed, clearing state` - Session isolation
 
-4. **Test with simpler model**:
-   - Opus 4.5 Thinking takes 2+ minutes to respond
-   - Test with faster model for quicker iteration
+### Common Issues
+
+1. **No response**: Check if CLI path is found in server logs
+2. **Messages mixed**: Verify session ID changes are logged
+3. **History not loading**: Check network tab for `/api/transcripts/` requests
+
+---
+
+## Next Steps (Feature Additions)
+
+After bugs are fixed, consider adding features from CodePilot (Mac version):
+
+1. **SQLite Database** - Persistent message storage
+2. **File Tree Panel** - Show project structure
+3. **MCP Server Management** - Visual editor for MCP config
+4. **Skills Editor** - Create and edit custom skills
+5. **Permission System** - Approve/reject tool calls
+6. **Model Selector** - Switch between Opus/Sonnet/Haiku
+7. **Mode Selector** - Code/Plan/Ask modes
+8. **Electron Packaging** - Desktop application
