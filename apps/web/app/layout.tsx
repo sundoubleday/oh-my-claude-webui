@@ -3,6 +3,7 @@ import "./globals.css"
 import { Toaster } from "@/components/ui/sonner"
 import { AppLayout } from "@/components/app-layout"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { ThemeProvider } from "@/components/theme-provider"
 
 export const metadata: Metadata = {
   title: "oh-my-claude-webui",
@@ -15,14 +16,16 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <body>
-        <ErrorBoundary>
-          <AppLayout>
-            {children}
-          </AppLayout>
-        </ErrorBoundary>
-        <Toaster />
+        <ThemeProvider>
+          <ErrorBoundary>
+            <AppLayout>
+              {children}
+            </AppLayout>
+          </ErrorBoundary>
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   )

@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
+import { ThemeToggle } from "./theme-toggle"
 
 // Stable "new chat" URL - we will dynamically append project if possible
 const BASE_NEW_CHAT_URL = '/chat?session=new'
@@ -352,9 +353,12 @@ function SidebarContent() {
       </div>
 
       <div className="border-t p-4 bg-muted/5">
-         <div className="text-[10px] text-muted-foreground font-mono">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] text-muted-foreground font-mono">
             v0.2.0 • Oh My Claude
-         </div>
+          </div>
+          <ThemeToggle />
+        </div>
       </div>
     </>
   )
