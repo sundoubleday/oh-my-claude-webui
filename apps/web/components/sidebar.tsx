@@ -82,8 +82,11 @@ function SidebarContent() {
   }
 
   // Filter sessions based on search
+  // If searching via API (length >= 2), trust the API results. Otherwise verify locally.
   const filteredSessions = sessions.filter(session => {
     if (!searchQuery) return true
+    if (searchQuery.length >= 2) return true // Trust API search results
+    
     const query = searchQuery.toLowerCase()
     return (
       (session.title?.toLowerCase() || "").includes(query) ||
@@ -115,11 +118,17 @@ function SidebarContent() {
     }))
   }
 
-  // Fetch sessions from API
+  // Fetch sessions from API (Search supported)
   useEffect(() => {
     const fetchSessions = async () => {
+      setLoading(true)
       try {
-        const res = await fetch("http://localhost:5757/api/transcripts")
+        // Use debounce for search query
+        const endpoint = searchQuery && searchQuery.length >= 2
+          ? `http://localhost:5757/api/transcripts/search?q=${encodeURIComponent(searchQuery)}`
+          : "http://localhost:5757/api/transcripts"
+          
+        const res = await fetch(endpoint)
         if (!res.ok) throw new Error("Failed to fetch")
         const data = await res.json()
         
@@ -141,8 +150,10 @@ function SidebarContent() {
       }
     }
 
-    fetchSessions()
-  }, [])
+    // Debounce search
+    const timer = setTimeout(fetchSessions, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery]) // Re-fetch when searchQuery changes
 
   // Handle delete session
   const handleDelete = async (e: React.MouseEvent, session: Session) => {

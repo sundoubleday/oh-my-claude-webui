@@ -89,12 +89,20 @@ async function extractMetadata(
     const displayMessages = toDisplayMessages(rawLines)
     
     if (displayMessages.length === 0) {
+      console.log(`[Metadata] Empty display messages for ${sessionInfo.sessionId}`)
       return null // Skip empty sessions
     }
     
     // Extract title from first user message
     const firstUserMsg = displayMessages.find(m => m.role === 'user')
-    const title = firstUserMsg ? (firstUserMsg.content.slice(0, 100) + (firstUserMsg.content.length > 100 ? '...' : '')) : 'New Conversation'
+    // Fallback title logic: Use first message content, or "New Conversation"
+    let title = 'New Conversation'
+    if (firstUserMsg && firstUserMsg.content) {
+      title = firstUserMsg.content.slice(0, 100) + (firstUserMsg.content.length > 100 ? '...' : '')
+    } else if (displayMessages.length > 0) {
+      // If no user message, maybe it started with assistant (rare)
+      title = `Conversation ${sessionInfo.sessionId.slice(0, 8)}`
+    }
     
     return {
       ...sessionInfo,
@@ -289,6 +297,88 @@ transcripts.get('/', async (c) => {
   } catch (error) {
     console.error('Failed to list transcripts:', error)
     return c.json({ error: 'Failed to list transcripts', code: 500 }, 500)
+  }
+})
+
+// Helper: Check if session content matches query
+async function searchSessionContent(
+  filePath: string,
+  query: string
+): Promise<boolean> {
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    return content.toLowerCase().includes(query.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+// GET /api/transcripts/search - Full text search across all sessions
+transcripts.get('/search', async (c) => {
+  const query = c.req.query('q')
+  if (!query || query.length < 2) {
+    return c.json([])
+  }
+
+  try {
+    const projectsDir = getProjectsDir()
+    let projectDirs: string[] = []
+    
+    try {
+      const entries = await readdir(projectsDir)
+      for (const entry of entries) {
+        try {
+          const entryPath = join(projectsDir, entry)
+          const s = await stat(entryPath)
+          if (s.isDirectory()) projectDirs.push(entry)
+        } catch {}
+      }
+    } catch {
+      return c.json([])
+    }
+
+    const results: TranscriptMetadata[] = []
+    
+    // Search in parallel across projects
+    await Promise.all(projectDirs.map(async (dirName) => {
+      const projectPath = join(projectsDir, dirName)
+      try {
+        const files = await readdir(projectPath)
+        const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.includes('memory'))
+        
+        await Promise.all(jsonlFiles.map(async (file) => {
+          const filePath = join(projectPath, file)
+          const isMatch = await searchSessionContent(filePath, query)
+          
+          if (isMatch) {
+            console.log(`[Search] Match found in ${file}`)
+            const sessionId = file.replace('.jsonl', '')
+            const sessionInfo = {
+              sessionId,
+              projectDir: dirName,
+              projectPath: dirNameToPath(dirName)
+            }
+            try {
+              const metadata = await extractMetadata(filePath, sessionInfo)
+              if (metadata) {
+                results.push(metadata)
+              } else {
+                console.warn(`[Search] Metadata extraction failed for ${file}`)
+              }
+            } catch (e) {
+              console.error(`[Search] Error extracting metadata for ${file}:`, e)
+            }
+          }
+        }))
+      } catch (e) {
+        console.error(`[Search] Error reading project ${dirName}:`, e)
+      }
+    }))
+
+    return c.json(results.sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime()))
+  } catch (error) {
+    console.error('Search failed:', error)
+    return c.json({ error: 'Search failed' }, 500)
   }
 })
 
