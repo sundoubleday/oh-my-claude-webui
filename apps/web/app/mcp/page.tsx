@@ -5,7 +5,9 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { Loader2 } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 // Types
 interface McpConfig {
@@ -16,31 +18,9 @@ interface McpConfig {
 }
 
 interface McpServer {
-  id?: string // Optional for new servers
+  id?: string
   name: string
   config: McpConfig
-}
-
-// Icons
-const Icons = {
-  Plus: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-  ),
-  Edit: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
-  ),
-  Trash: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-  ),
-  Terminal: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-  ),
-  Check: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"/></svg>
-  ),
-  X: ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-  ),
 }
 
 const API_BASE = "http://localhost:5757/api/mcp"
@@ -82,6 +62,31 @@ export default function McpPage() {
     }
   }
 
+  // 切换启用/禁用状态
+  const toggleEnabled = async (server: McpServer) => {
+    const newEnabled = !server.config.enabled
+    
+    try {
+      const res = await fetch(`${API_BASE}/${server.name}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...server.config, enabled: newEnabled })
+      })
+      
+      if (!res.ok) throw new Error("Failed to update")
+      
+      setServers(prev => prev.map(s => 
+        s.name === server.name 
+          ? { ...s, config: { ...s.config, enabled: newEnabled } }
+          : s
+      ))
+      
+      toast.success(`${server.name} ${newEnabled ? 'enabled' : 'disabled'}`)
+    } catch (error) {
+      toast.error("Failed to toggle server")
+    }
+  }
+
   const openAddModal = () => {
     setEditingServer(null)
     setFormData({
@@ -118,13 +123,11 @@ export default function McpPage() {
 
       const config = JSON.parse(formData.configJson)
       
-      // Basic validation
       if (!config.command) throw new Error("Config must have a command")
 
       setIsSubmitting(true)
 
       if (editingServer) {
-        // Edit
         const res = await fetch(`${API_BASE}/${editingServer.name}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -136,7 +139,6 @@ export default function McpPage() {
         }
         toast.success("Server updated successfully")
       } else {
-        // Add
         const res = await fetch(API_BASE, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -150,7 +152,7 @@ export default function McpPage() {
       }
       
       setIsModalOpen(false)
-      fetchServers() // Refresh list
+      fetchServers()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Invalid configuration")
     } finally {
@@ -172,7 +174,7 @@ export default function McpPage() {
         toast.success("Server deleted")
         setIsDeleteModalOpen(false)
         setEditingServer(null)
-        fetchServers() // Refresh list
+        fetchServers()
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete server")
       } finally {
@@ -190,7 +192,7 @@ export default function McpPage() {
           <p className="text-muted-foreground mt-1">Manage your Model Context Protocol server configurations.</p>
         </div>
         <Button onClick={openAddModal} className="shrink-0 gap-2">
-          <Icons.Plus /> Add Server
+          <span className="text-lg leading-none">+</span> Add Server
         </Button>
       </div>
 
@@ -203,22 +205,35 @@ export default function McpPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {servers.map((server, index) => (
-            <Card key={`${server.name}-${index}`} className="group overflow-hidden border-border/50 hover:border-border transition-all duration-300 hover:shadow-md bg-card/50 backdrop-blur-sm">
+            <Card key={`${server.name}-${index}`} 
+              className={cn(
+                "group overflow-hidden border-border/50 hover:border-border transition-all duration-300 hover:shadow-md bg-card/50 backdrop-blur-sm",
+                !server.config.enabled && "opacity-75"
+              )}>
               <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                <div className="space-y-1">
+                <div className="space-y-1 flex-1">
                   <CardTitle className="text-base font-medium flex items-center gap-2">
                     {server.name}
                   </CardTitle>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className={`flex h-2 w-2 rounded-full ${server.config.enabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-400'}`} />
+                    <span className={cn(
+                      "flex h-2 w-2 rounded-full",
+                      server.config.enabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-400'
+                    )} />
                     {server.config.enabled ? 'Active' : 'Disabled'}
                   </div>
                 </div>
+                
+                {/* 启用/禁用开关 */}
+                <Switch
+                  checked={server.config.enabled}
+                  onCheckedChange={() => toggleEnabled(server)}
+                />
               </CardHeader>
               <CardContent>
                 <div className="rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground break-all border border-border/50">
                   <div className="flex items-center gap-2 mb-1 opacity-70">
-                    <Icons.Terminal />
+                    <span className="text-lg">⌘</span>
                     <span className="font-semibold uppercase tracking-wider text-[10px]">Command</span>
                   </div>
                   {server.config.command} {server.config.args.join(" ")}
@@ -226,10 +241,10 @@ export default function McpPage() {
               </CardContent>
               <CardFooter className="flex justify-end gap-2 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => openEditModal(server)}>
-                  <Icons.Edit />
+                  <span className="text-sm">✎</span>
                 </Button>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => openDeleteModal(server)}>
-                  <Icons.Trash />
+                  <span className="text-sm">🗑</span>
                 </Button>
               </CardFooter>
             </Card>
@@ -238,15 +253,15 @@ export default function McpPage() {
           {/* Empty State */}
           {servers.length === 0 && (
             <div className="col-span-full py-16 text-center border-2 border-dashed rounded-xl bg-muted/10">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
-                <Icons.Terminal />
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4 text-2xl">
+                ⌘
               </div>
               <h3 className="text-lg font-semibold">No MCP servers configured</h3>
               <p className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto">
-                Add your first MCP server to start extending Claude's capabilities with local tools and resources.
+                Add your first MCP server to start extending Claude&apos;s capabilities with local tools and resources.
               </p>
               <Button onClick={openAddModal} variant="outline" className="mt-6">
-                <Icons.Plus className="mr-2 h-4 w-4" /> Add Server
+                <span className="mr-2 text-lg">+</span> Add Server
               </Button>
             </div>
           )}
@@ -261,7 +276,7 @@ export default function McpPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold">{editingServer ? 'Edit Server' : 'Add New Server'}</h2>
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setIsModalOpen(false)}>
-                  <Icons.X />
+                  <span className="text-lg">×</span>
                 </Button>
               </div>
               

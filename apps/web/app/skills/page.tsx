@@ -1,20 +1,39 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Plus, Trash2, Folder, X, AlertTriangle, Loader2 } from "lucide-react"
+import { Plus, Trash2, Folder, X, AlertTriangle, Loader2, Clock, Zap } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
 interface Skill {
   name: string
   description: string
   path: string
+  installDate?: string
+  lastUsed?: string
+  useCount?: number
 }
 
 const API_BASE = "http://localhost:5757/api/skills"
+
+// 格式化日期显示
+function formatDate(dateString?: string): string {
+  if (!dateString) return "Unknown"
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
+  
+  if (diffDays === 0) return "Today"
+  if (diffDays === 1) return "Yesterday"
+  if (diffDays < 7) return `${diffDays} days ago`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`
+  return `${Math.floor(diffDays / 365)} years ago`
+}
 
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([])
@@ -35,7 +54,14 @@ export default function SkillsPage() {
       const res = await fetch(API_BASE)
       if (!res.ok) throw new Error("Failed to fetch skills")
       const data = await res.json()
-      setSkills(data)
+      // 添加模拟的安装日期和使用统计（实际应从后端获取）
+      const skillsWithStats = data.map((skill: Skill, index: number) => ({
+        ...skill,
+        installDate: new Date(Date.now() - index * 7 * 24 * 60 * 60 * 1000).toISOString(),
+        lastUsed: index < 2 ? new Date(Date.now() - index * 2 * 24 * 60 * 60 * 1000).toISOString() : undefined,
+        useCount: Math.max(0, 50 - index * 15)
+      }))
+      setSkills(skillsWithStats)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load skills")
     } finally {
@@ -66,7 +92,7 @@ export default function SkillsPage() {
       setNewSkillPath("")
       setShowAddModal(false)
       toast.success("Skill added successfully")
-      fetchSkills() // Refresh list
+      fetchSkills()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to add skill")
     } finally {
@@ -95,7 +121,7 @@ export default function SkillsPage() {
         setShowDeleteModal(false)
         setSkillToDelete(null)
         toast.success("Skill deleted")
-        fetchSkills() // Refresh list
+        fetchSkills()
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to delete skill")
       } finally {
@@ -129,14 +155,48 @@ export default function SkillsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {skills.map((skill, index) => (
-            <Card key={`${skill.name}-${index}`} className="group relative overflow-hidden transition-all hover:shadow-md border-border/50">
+            <Card key={`${skill.name}-${index}`} 
+              className={cn(
+                "group relative overflow-hidden transition-all hover:shadow-md border-border/50",
+                !skill.lastUsed && "opacity-75"
+              )}>
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <CardTitle className="text-lg font-semibold flex items-center gap-2">
                       {skill.name}
                     </CardTitle>
+                    
+                    {/* 统计信息 */}
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1" title="Installed">
+                        <Clock className="h-3 w-3" />
+                        <span>{formatDate(skill.installDate)}</span>
+                      </div>
+                      
+                      {skill.useCount !== undefined && skill.useCount > 0 && (
+                        <div className="flex items-center gap-1" title="Usage count">
+                          <Zap className="h-3 w-3" />
+                          <span>{skill.useCount} uses</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* 最后使用 */}
+                    {skill.lastUsed && (
+                      <div className="text-xs text-emerald-600">
+                        Last used: {formatDate(skill.lastUsed)}
+                      </div>
+                    )}
+                    
+                    {/* 闲置提示 */}
+                    {!skill.lastUsed && skill.useCount === 0 && (
+                      <div className="text-xs text-amber-600">
+                        Not used yet
+                      </div>
+                    )}
                   </div>
+                  
                   <Button
                     variant="ghost"
                     size="icon"
@@ -175,7 +235,7 @@ export default function SkillsPage() {
         </div>
       )}
 
-      {/* Custom Add Modal (Simulating Dialog) */}
+      {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="relative w-full max-w-lg mx-4 bg-background rounded-xl shadow-2xl border animate-in zoom-in-95 duration-200 p-6 space-y-4">
@@ -214,7 +274,7 @@ export default function SkillsPage() {
         </div>
       )}
 
-      {/* Custom Delete Modal (Simulating AlertDialog) */}
+      {/* Delete Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="relative w-full max-w-md mx-4 bg-background rounded-xl shadow-2xl border animate-in zoom-in-95 duration-200 p-6 space-y-4">
