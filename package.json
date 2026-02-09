@@ -20,9 +20,13 @@
     "electron:pack": "bun run build:electron && electron-builder --dir",
     "electron:dist": "bun run build:electron && electron-builder",
     "start": "bun run --filter web start",
-    "test": "bun test",
+    "test": "vitest",
     "test:e2e": "playwright test",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "test:unit": "vitest __tests__/unit",
+    "test:integration": "vitest __tests__/integration",
+    "test:coverage": "vitest --coverage",
+    "test:ui": "vitest --ui"
   },
   "devDependencies": {
     "@playwright/test": "latest",
@@ -66,11 +70,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico"
@@ -82,12 +90,18 @@
       "deleteAppDataOnUninstall": false
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icon.png",
       "category": "Development"
     }
