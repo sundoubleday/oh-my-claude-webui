@@ -5,7 +5,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
+
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -224,11 +224,20 @@ export default function McpPage() {
                   </div>
                 </div>
                 
-                {/* 启用/禁用开关 */}
-                <Switch
-                  checked={server.config.enabled}
-                  onCheckedChange={() => toggleEnabled(server)}
-                />
+                {/* 启用/禁用按钮 */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn(
+                    "h-7 px-2 text-xs",
+                    server.config.enabled 
+                      ? "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" 
+                      : "text-slate-400 hover:text-slate-600"
+                  )}
+                  onClick={() => toggleEnabled(server)}
+                >
+                  {server.config.enabled ? 'ON' : 'OFF'}
+                </Button>
               </CardHeader>
               <CardContent>
                 <div className="rounded-md bg-muted/50 p-3 font-mono text-xs text-muted-foreground break-all border border-border/50">
