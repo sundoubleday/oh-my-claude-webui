@@ -1,9 +1,10 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Folder, FileCode, ChevronRight, ChevronDown, RefreshCw, File, FolderOpen } from "lucide-react"
+import { Folder, FileCode, ChevronRight, ChevronDown, RefreshCw, Copy, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { toast } from "sonner"
 
 interface FileItem {
   name: string
@@ -16,13 +17,24 @@ interface FileItem {
 interface FileExplorerProps {
   initialPath?: string
   onFileSelect?: (file: FileItem) => void
+  onFileDrag?: (file: FileItem) => void
 }
 
-export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
+export function FileExplorer({ initialPath, onFileSelect, onFileDrag }: FileExplorerProps) {
   const [treeData, setTreeData] = useState<FileItem[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [currentPath, setCurrentPath] = useState(initialPath || "")
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
+
+  // Decode path for display
+  const decodePath = useCallback((encodedPath: string): string => {
+    // Convert project directory name format back to real path
+    // E--Vibe-Coding-claude-code -> E:\Vibe-Coding-claude-code
+    return encodedPath
+      .replace(/^([A-Za-z])--/, '$1:\\')
+      .replace(/--/g, '\\')
+  }, [])
 
   // 加载文件夹内容
   const loadFolder = useCallback(async (path: string): Promise<FileItem[]> => {
@@ -41,10 +53,11 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
   // 初始加载根目录
   useEffect(() => {
     if (initialPath && initialPath !== currentPath) {
-      setCurrentPath(initialPath)
-      setExpandedFolders(new Set([initialPath]))
+      const decoded = decodePath(initialPath)
+      setCurrentPath(decoded)
+      setExpandedFolders(new Set([decoded]))
     }
-  }, [initialPath, currentPath])
+  }, [initialPath, currentPath, decodePath])
 
   // 加载根目录数据
   useEffect(() => {
@@ -83,6 +96,41 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
     }
   }
 
+  // 复制路径到剪贴板
+  const copyPath = async (path: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopiedPath(path)
+      toast.success("路径已复制")
+      setTimeout(() => setCopiedPath(null), 2000)
+    } catch (err) {
+      toast.error("复制失败")
+    }
+  }
+
+  // 处理拖拽开始
+  const handleDragStart = (e: React.DragEvent, item: FileItem) => {
+    e.dataTransfer.setData('text/plain', item.path)
+    e.dataTransfer.effectAllowed = 'copy'
+    onFileDrag?.(item)
+  }
+
+  // 处理文件点击 - 自动填充 /read 命令
+  const handleFileClick = (item: FileItem) => {
+    if (item.isDirectory) {
+      toggleFolder(item)
+    } else {
+      // 发送 /read 命令到聊天框
+      const readCommand = `/read "${item.path}"`
+      onFileSelect?.(item)
+      
+      // 复制到剪贴板方便粘贴
+      navigator.clipboard.writeText(readCommand)
+      toast.success(`已复制: ${readCommand}`)
+    }
+  }
+
   // 刷新当前目录
   const handleRefresh = async () => {
     if (!currentPath) return
@@ -97,6 +145,7 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
     return items.map((item) => {
       const isExpanded = expandedFolders.has(item.path)
       const paddingLeft = level * 12 + 8
+      const isCopied = copiedPath === item.path
 
       return (
         <div key={item.path}>
@@ -106,6 +155,9 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
               item.isDirectory ? "text-foreground font-medium" : "text-muted-foreground"
             )}
             style={{ paddingLeft: `${paddingLeft}px` }}
+            draggable={!item.isDirectory}
+            onDragStart={(e) => handleDragStart(e, item)}
+            onClick={() => handleFileClick(item)}
           >
             {/* 展开/折叠图标 */}
             {item.isDirectory ? (
@@ -129,7 +181,7 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
             {/* 文件/文件夹图标 */}
             {item.isDirectory ? (
               isExpanded ? (
-                <FolderOpen className="h-4 w-4 text-blue-400 shrink-0" />
+                <Folder className="h-4 w-4 text-blue-400 shrink-0" />
               ) : (
                 <Folder className="h-4 w-4 text-blue-400 shrink-0 fill-blue-400/20" />
               )
@@ -138,18 +190,22 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
             )}
 
             {/* 文件名 */}
-            <span 
-              className="truncate flex-1"
-              onClick={() => {
-                if (item.isDirectory) {
-                  toggleFolder(item)
-                } else {
-                  onFileSelect?.(item)
-                }
-              }}
-            >
+            <span className="truncate flex-1">
               {item.name}
             </span>
+
+            {/* 复制路径按钮 */}
+            <button
+              onClick={(e) => copyPath(item.path, e)}
+              className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center hover:bg-accent rounded transition-opacity"
+              title="复制路径"
+            >
+              {isCopied ? (
+                <Check className="h-3 w-3 text-emerald-500" />
+              ) : (
+                <Copy className="h-3 w-3 text-muted-foreground" />
+              )}
+            </button>
           </div>
 
           {/* 递归渲染子文件夹 */}
@@ -199,6 +255,11 @@ export function FileExplorer({ initialPath, onFileSelect }: FileExplorerProps) {
           </div>
         )}
         {currentPath && renderTree(treeData)}
+      </div>
+
+      {/* 提示 */}
+      <div className="p-2 text-[10px] text-muted-foreground border-t border-border/50 bg-muted/10">
+        点击文件复制 /read 命令 • 拖拽到聊天框
       </div>
     </div>
   )

@@ -514,6 +514,18 @@ function ChatContent() {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
+    
+    // Check for dragged file path from FileExplorer
+    const draggedPath = e.dataTransfer.getData('text/plain')
+    if (draggedPath && !e.dataTransfer.files.length) {
+      // Insert /read command at cursor position or append to input
+      const readCommand = `/read "${draggedPath}"`
+      setInput(prev => prev ? `${prev} ${readCommand}` : readCommand)
+      toast.success(`Added: ${readCommand}`)
+      inputRef.current?.focus()
+      return
+    }
+    
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFiles(e.dataTransfer.files)
     }

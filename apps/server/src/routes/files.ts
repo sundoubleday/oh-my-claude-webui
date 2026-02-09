@@ -1,22 +1,29 @@
 import { Hono } from 'hono'
 import { readdir, stat, readFile } from 'fs/promises'
-import { join, isAbsolute, resolve, relative } from 'path'
+import { join, isAbsolute, resolve } from 'path'
 import { homedir } from 'os'
 
 const files = new Hono()
 
-// Helper: Validate path is safe (prevent traversal out of allowed roots)
-// For this local tool, we generally trust the user, but it's good practice.
-// We allow access to HOME and other drives if needed.
-function isSafePath(targetPath: string): boolean {
-  // Relaxed check for local desktop app usage
-  return true
+// Helper: Decode path (handle URL encoding and project name conversion)
+function decodePath(encodedPath: string): string {
+  // URL decode first
+  let decoded = decodeURIComponent(encodedPath)
+  
+  // Convert project directory name format back to real path
+  // E--Vibe-Coding-claude-code -> E:\Vibe-Coding-claude-code
+  // But preserve spaces if they exist
+  decoded = decoded
+    .replace(/^([A-Za-z])--/, '$1:\\')
+    .replace(/--/g, '\\')
+  
+  return decoded
 }
 
 // GET /api/files - List directory contents
 files.get('/', async (c) => {
   const pathParam = c.req.query('path')
-  const dirPath = pathParam ? resolve(pathParam) : homedir()
+  const dirPath = pathParam ? resolve(decodePath(pathParam)) : homedir()
 
   try {
     const entries = await readdir(dirPath, { withFileTypes: true })
@@ -72,7 +79,8 @@ files.get('/content', async (c) => {
   }
 
   try {
-    const content = await readFile(pathParam, 'utf-8')
+    const decodedPath = decodePath(pathParam)
+    const content = await readFile(decodedPath, 'utf-8')
     return c.json({ content })
   } catch (error: any) {
     return c.json({ error: error.message || 'Failed to read file' }, 500)
